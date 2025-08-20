@@ -1,0 +1,72 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-py"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                  String   @id @default(uuid())
+  email               String   @unique
+  name                String?
+  passwordHash        String
+  onboardingCompleted Boolean  @default(false)
+  age                 Int?
+  gender              String?
+  height              Float?
+  heightUnit          String?
+  weight              Float?
+  weightUnit          String?
+  activityLevel       String?
+  dietaryProfile      Json?
+  likedIngredients    String[]
+  dislikedIngredients String[]
+  favoriteCuisines    String[]
+  otherCuisine        String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  feedback            Feedback[]
+}
+
+model Feedback {
+  id               String   @id @default(uuid())
+  liked            Boolean
+  healthinessScore Int
+  tastinessScore   Int
+  intentToTryScore Int
+  recommendationId String
+  createdAt        DateTime @default(now())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+}
+
+model Recipe {
+  id             String   @id @default(uuid())
+  preferences    String
+  recommendation String   @db.Text // Use @db.Text for long strings
+  createdAt      DateTime @default(now())
+
+  // Optional: Link to the user who requested it
+  // userId         String
+  // user           User     @relation(fields: [userId], references: [id])
+}
+
+model TrainingRecord {
+  id                  String    @id @default(uuid())
+  userId              String
+  userProfileSnapshot Json
+  recommendationId    String
+  recommendationName  String
+  explanation         String    @db.Text
+  group               String?
+  liked               Boolean?
+  healthinessScore    Int?
+  tastinessScore      Int?
+  intentToTryScore    Int?
+  createdAt           DateTime  @default(now())
+}

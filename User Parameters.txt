@@ -1,0 +1,55 @@
+User Parameters:
+The data will be provided to recommender function as a single Python dictionary (which is easily represented as JSON).
+
+1. Basic Profile
+
+Key	Data Type	Example	Notes
+age	int or None	35	Will be None if the user skips it.
+gender	str or None	"Male"	
+height	float or None	180.5	
+heightUnit	str or None	"cm"	
+weight	float or None	78.0	
+weightUnit	str or None	"kg"	
+activityLevel	str or None	"Moderately Active"	
+
+Dietary Needs
+
+
+2. Dietary Needs
+This information is contained within a single nested dictionary called dietaryProfile.
+
+Key: dietaryProfile
+Data Type: dict or None
+
+The structure of the dietaryProfile dictionary is as follows:
+
+{
+  "dietaryRestrictions": {
+    "selected": ["Vegan", "Gluten-Free"],
+    "other": "No added sugar"
+  },
+  "foodAllergies": {
+    "selected": ["Peanuts", "Shellfish"],
+    "other": ""
+  },
+  "healthConditions": {
+    "selected": ["Hypertension"],
+    "other": "GERD"
+  }
+}
+
+Breakdown:
+Each of the three main keys (dietaryRestrictions, foodAllergies, healthConditions) contains a dictionary.
+selected: A list of str containing the user's chosen options.
+other: A str for any custom, user-written values.
+
+
+3. Taste Profile
+These are top-level keys that capture the user's specific tastes.
+
+Key	Data Type	Example	Notes
+likedIngredients	list of str	["Chicken", "Broccoli"]	The backend automatically parses the user's comma-separated input into a clean list.
+dislikedIngredients	list of str	["Mushrooms", "Olives"]	The backend also parses this into a clean list.
+favoriteCuisines	list of str	["Italian", "Mexican"]	This is received directly from the frontend as a list.
+otherCuisine	str or None	"Korean"	For any custom, user-written values.
+
