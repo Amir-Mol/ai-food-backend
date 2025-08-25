@@ -14,7 +14,8 @@ model User {
   id                  String   @id @default(uuid())
   email               String   @unique
   name                String?
-  passwordHash        String
+  passwordHash        String?
+  group               String   @default("control")
   onboardingCompleted Boolean  @default(false)
   age                 Int?
   gender              String?
@@ -62,8 +63,8 @@ model TrainingRecord {
   userProfileSnapshot Json
   recommendationId    String
   recommendationName  String
-  explanation         String    @db.Text
-  group               String?
+  explanation         String?    @db.Text
+  group               String
   liked               Boolean?
   healthinessScore    Int?
   tastinessScore      Int?

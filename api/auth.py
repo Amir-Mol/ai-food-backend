@@ -10,6 +10,7 @@ import bcrypt
 from prisma.errors import UniqueViolationError
 from database import db # Import the shared db instance
 import re
+import random
 from prisma.models import User
 from typing import Annotated # Import Annotated for type hinting dependencies
 from jose import JWTError, jwt
@@ -28,8 +29,8 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 if not SECRET_KEY or not ALGORITHM:
     raise ValueError("SECRET_KEY and ALGORITHM must be set in environment variables")
 
-#if not GOOGLE_CLIENT_ID:
-#    raise ValueError("GOOGLE_CLIENT_ID must be set in environment variables")
+if not GOOGLE_CLIENT_ID:
+    raise ValueError("GOOGLE_CLIENT_ID must be set in environment variables")
 
 # OAuth2 scheme for token authentication
 # This tells FastAPI how to expect the token (Bearer token in Authorization header)
@@ -122,7 +123,15 @@ async def register_user(user_data: UserCreate):
     hashed_password = get_password_hash(user_data.password)
 
     try:
-        new_user = await db.user.create(data={"email": user_data.email, "passwordHash": hashed_password})
+        # Assign user to a group
+        group = random.choice(["control", "transparency"])
+        new_user = await db.user.create(
+            data={
+                "email": user_data.email,
+                "passwordHash": hashed_password,
+                "group": group,
+            }
+        )
         return JSONResponse(
             status_code=status.HTTP_201_CREATED,
             content={
@@ -175,10 +184,12 @@ async def google_login(google_token: GoogleToken):
 
     if not user:
         # User does not exist, create a new one
+        group = random.choice(["control", "transparency"])
         user = await db.user.create(
             data={
                 "email": user_email,
                 "name": user_name,
+                "group": group,
                 # passwordHash can be null for Google-signed-in users
             }
         )

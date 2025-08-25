@@ -1,9 +1,13 @@
 import pandas as pd
 import numpy as np
 import ast
+import sys
 import re
 from pathlib import Path
 from typing import List, Dict, Any
+
+# Add the project's root directory (backend) to the Python path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 # Import settings from the central config file
 import config
@@ -120,7 +124,6 @@ def run_preprocessing():
     df['health_score'] = np.round((df['combined_norm_score'] * 9) + 1, 1)
     
     # Add placeholder image URL and generate tags
-    df['image_url'] = config.PLACEHOLDER_IMAGE_URL
     df['tags'] = df.apply(_generate_recipe_tags, axis=1)
     print("Feature engineering complete.")
 

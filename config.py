@@ -12,11 +12,6 @@ PROCESSED_RECIPE_FILE = PROCESSED_DATA_DIR / "processed_recipes.parquet"
 PROCESSED_RECIPE_DEBUG_CSV_FILE = PROCESSED_DATA_DIR / "processed_recipes_debug.csv"
 RECIPE_EMBEDDINGS_FILE = PROCESSED_DATA_DIR / "recipe_embeddings.npy"
 
-# --- Preprocessing Settings ---
-PLACEHOLDER_IMAGE_URL = (
-    "https://img.sndimg.com/food/image/upload/f_auto,c_thumb,q_55,w_860,ar_3:2/v1/img/recipes/33/42/0/uEYux4vuQB6frgI11osi_GREAT_BUFFALO_CHICKEN_PIZZA_041.jpg"
-)
-
 # Exact list of cleaned nutritional column names from the raw data
 NUTRITIONAL_COLS = [
     'calories', 'caloriesfromfat', 'totalfat', 'saturatedfat', 'cholesterol',

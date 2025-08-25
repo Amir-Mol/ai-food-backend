@@ -31,6 +31,7 @@ async def check_users_in_db():
     for user in users:
         print(f"\n- User ID: {user.id}")
         print(f"  Email: {user.email}")
+        print(f"  A/B Test Group: {user.group}")
         print(f"  Onboarding Completed: {user.onboardingCompleted}")
         
         # --- Section to print the full profile ---
@@ -79,7 +80,7 @@ async def main():
         #await erase_all_data()
 
         await check_users_in_db()
-        await check_training_records_in_db()
+        #await check_training_records_in_db()
     finally:
         print("\nDisconnecting from database...")
         await db.disconnect()

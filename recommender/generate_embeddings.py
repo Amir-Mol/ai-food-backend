@@ -11,6 +11,10 @@ loading in recommendation tasks.
 import pandas as pd
 import numpy as np
 from sentence_transformers import SentenceTransformer
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from config import PROCESSED_RECIPE_FILE, RECIPE_EMBEDDINGS_FILE
 

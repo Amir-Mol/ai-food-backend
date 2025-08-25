@@ -1,6 +1,7 @@
 import json
 import pandas as pd
 import numpy as np
+import logging
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, ValidationError, Field
 from typing import List, Annotated, Dict, Any, Optional, Union
@@ -49,7 +50,7 @@ class NutritionalInfo(BaseModel):
 class FinalRankedRecommendation(BaseModel):
     recipeId: str
     name: str
-    explanation: str
+    explanation: Optional[str] = None
     imageUrl: Optional[str] = None
     healthScore: Optional[float] = None
     ingredients: Optional[List[str]] = None
@@ -93,6 +94,15 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
 
     final_consideration_set = [recipe for recipe in consideration_set if str(recipe.get('recipeId')) not in seen_recipe_ids]
     
+    # --- Handle consideration set exhaustion ---
+    # If the number of unseen recipes is low, clear the cache so a new set is generated on the next request.
+    if len(final_consideration_set) < 5:
+        logging.info(
+            f"Consideration set for user {user_id} is nearly exhausted ({len(final_consideration_set)} unseen recipes). Invalidating cache for next request."
+        )
+        if user_id in CONSIDERATION_SET_CACHE:
+            del CONSIDERATION_SET_CACHE[user_id]
+
     if not final_consideration_set:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -140,12 +150,15 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
             full_recipe_data = consideration_set_map.get(ranked_rec.recipeId)
             
             if full_recipe_data:
+                # Control what data is shown based on user group for experiment
+                is_control_group = current_user.group == "control"
+
                 enriched_rec = FinalRankedRecommendation(
                     recipeId=ranked_rec.recipeId,
                     name=full_recipe_data.get("recipe_name"),
-                    explanation=ranked_rec.explanation,
+                    explanation=None if is_control_group else ranked_rec.explanation,
                     imageUrl=full_recipe_data.get("imageUrl"),
-                    healthScore=full_recipe_data.get("healthScore"),
+                    healthScore=None if is_control_group else full_recipe_data.get("healthScore"),
                     ingredients=full_recipe_data.get("ingredients"),
                     recipeUrl=full_recipe_data.get("recipeUrl"),
                     nutritionalInfo=NutritionalInfo(
@@ -172,7 +185,7 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
                         "recommendationId": str(rec.recipeId),
                         "recommendationName": rec.name,
                         "explanation": rec.explanation,
-                        # The 'group' field can be added here for A/B testing later
+                        "group": current_user.group,
                     }
                 )
         except Exception as e:
