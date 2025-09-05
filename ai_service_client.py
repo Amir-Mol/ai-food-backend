@@ -32,19 +32,33 @@ def get_openai_client() -> AsyncOpenAI:
 
 async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: list):
     """
-    Generates a recipe suggestion using the OpenAI API with a detailed prompt and a JSON structure example.
+    Generates recipe suggestions using the OpenAI API.
+    The model re-ranks candidate recipes and returns up to 5 recommendations
+    with balanced explanations in JSON format.
     """
     # Convert the user profile and candidates to a string format for the prompt
     user_profile_str = "\n".join([f"{key}: {value}" for key, value in user_profile.model_dump().items() if value])
     recipe_candidates_str = json.dumps(recipe_candidates, indent=2)
 
+    # System prompt: role, rules, constraints
     system_prompt = (
-        "You are an expert nutritionist and chef. Your task is to analyze a user's profile and a list of "
-        "recipe candidates. Re-rank the candidates and select the top 5 that best fit the user's needs. "
-        "For each of the top 5, you must provide a balanced and honest explanation paragraph."
-        "IMPORTANT: Address the user directly in the second person, using 'you' and 'your'."
+        "You are an expert nutritionist and chef. "
+        "Your task is to analyze a user's profile and a list of candidate recipes. "
+        "You must re-rank the candidates and return the top 5 that best fit. "
+        "For each of the top 5, write a concise and helpful explanation of about 4-5 sentences. The explanation paragraph must be balanced: \n"
+        "- Start with why it matches the user's tastes and preferences.\n"
+        "- Then, discuss its health aspects in the context of the user's profile.\n"
+        "- Finally, mention any potential drawbacks or considerations.\n"
+        "Strict rules:\n"
+        "- Do NOT invent new recipes. The number of recipes you return must not be more than the number of candidates provided.\n"
+        "- Return no more recipes than the number of candidates provided.\n"
+        "- Always include the original recipeId exactly as given.\n"
+        "- All explanations MUST be personalized based on the user's profile.\n"
+        "- Address the user directly in the second person ('you', 'your').\n"
+        "- Output ONLY a valid JSON object following the schema."
     )
 
+    # User prompt: inputs + JSON schema
     user_prompt = f"""
     Here is the user's profile:
     ---USER PROFILE---
@@ -56,23 +70,7 @@ async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: 
     {recipe_candidates_str}
     -----------------------
 
-    Perform the following tasks:
-    1. Re-rank the list and select the top 5 best options for this user (**Important:** The number
-    of recipes you return must not be more than the number of candidates provided. Do not invent new recipes.).
-    2. For each of the top 5, provide a 'pros' list and a 'cons' list based on the user's profile.
-    3. **Crucially, you must include the original 'recipeId' for each recipe from the candidate list in your response.**
-
-    1. Re-rank the provided recipe candidates and select up to 5 of the best options for this user.
-       **Important:** The number of recipes you return must not be more than the number of candidates provided. Do not invent new recipes.
-    2. For each of the top 5, write a concise and helpful explanation of about 4-5 sentences. The explanation paragraph must be balanced:
-       - Start with why it matches the user's tastes and preferences.
-       - Then, discuss its health aspects in the context of the user's profile.
-       - Finally, mention any potential drawbacks or considerations.
-    3. **Crucially, you must include the original 'recipeId' for each recipe from the candidate list in your response.**
-    
-    
-    IMPORTANT: Your final output MUST be a single, valid JSON object. Do not include any text or markdown formatting before or after the JSON.
-    The JSON object must follow this exact structure:
+    Now return the final ranked recommendations in this exact structure:
 
     {{
       "ranked_recommendations": [
@@ -96,7 +94,8 @@ async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: 
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.7,
-            max_tokens=1500  # Increased max_tokens for a more detailed response
+            max_tokens=1500,  # Increased max_tokens for a more detailed response
+            response_format={"type": "json_object"}
         )
         suggestion = response.choices[0].message.content
         return suggestion.strip() if suggestion else ERROR_MESSAGE
