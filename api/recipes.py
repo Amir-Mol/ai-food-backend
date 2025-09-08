@@ -101,16 +101,8 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
             del CONSIDERATION_SET_CACHE[user_id]
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="You have seen all current recommendations. A new set will be ready on your next request. Please try again."
+            detail="You have seen all current recommendations. A new set will be ready on your next request."
         )
-
-    # If the number of unseen recipes is low, proactively clear the cache so a new set is generated on the next request.
-    elif len(final_consideration_set) < 5:
-        logging.info(
-            f"Consideration set for user {user_id} is nearly exhausted ({len(final_consideration_set)} unseen recipes). Invalidating cache for next request."
-        )
-        if user_id in CONSIDERATION_SET_CACHE:
-            del CONSIDERATION_SET_CACHE[user_id]
 
     # --- Create LLM-Optimized Payload ---
     llm_payload = [{
