@@ -203,7 +203,7 @@ def generate_consideration_set(
     user_profile: Dict[str, Any],
     recipes_df: pd.DataFrame,
     recipe_embeddings: np.ndarray,
-    consideration_set_size: int = 100
+    consideration_set_size: int = 20
 ) -> List[Dict[str, Any]]:
     """
     The main function for the Stage 1 Filtering Engine.
