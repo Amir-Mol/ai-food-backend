@@ -94,20 +94,23 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
 
     final_consideration_set = [recipe for recipe in consideration_set if str(recipe.get('recipeId')) not in seen_recipe_ids]
     
-    # --- Handle consideration set exhaustion ---
-    # If the number of unseen recipes is low, clear the cache so a new set is generated on the next request.
-    if len(final_consideration_set) < 5:
+    # --- Handle consideration set exhaustion ---    
+    if not final_consideration_set:
+        # If the user has seen all recipes, invalidate the cache and tell them to try again.
+        if user_id in CONSIDERATION_SET_CACHE:
+            del CONSIDERATION_SET_CACHE[user_id]
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="You have seen all current recommendations. A new set will be ready on your next request. Please try again."
+        )
+
+    # If the number of unseen recipes is low, proactively clear the cache so a new set is generated on the next request.
+    elif len(final_consideration_set) < 5:
         logging.info(
             f"Consideration set for user {user_id} is nearly exhausted ({len(final_consideration_set)} unseen recipes). Invalidating cache for next request."
         )
         if user_id in CONSIDERATION_SET_CACHE:
             del CONSIDERATION_SET_CACHE[user_id]
-
-    if not final_consideration_set:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Found recommendations, but you have already seen them all. Try again later!"
-        )
 
     # --- Create LLM-Optimized Payload ---
     llm_payload = [{
