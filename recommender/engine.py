@@ -15,6 +15,8 @@ from typing import List, Dict, Any, Optional
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
+from config import CONSIDERATION_SET_SIZE
+
 # It is assumed that the model is loaded once when the application starts.
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
@@ -203,7 +205,7 @@ def generate_consideration_set(
     user_profile: Dict[str, Any],
     recipes_df: pd.DataFrame,
     recipe_embeddings: np.ndarray,
-    consideration_set_size: int = 20
+    consideration_set_size: int = CONSIDERATION_SET_SIZE
 ) -> List[Dict[str, Any]]:
     """
     The main function for the Stage 1 Filtering Engine.
