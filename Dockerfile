@@ -32,7 +32,10 @@ RUN prisma generate
 # This stage copies the application code and the virtual environment
 # from the builder stage to create a lean final image.
 FROM python:3.12-slim
-
+RUN apt-get update && \
+    apt-get install -y libatomic1 && \
+    rm -rf /var/lib/apt/lists/*
+    
 WORKDIR /app
 
 # Copy the virtual environment from the builder stage
