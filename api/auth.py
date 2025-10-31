@@ -2,13 +2,14 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, field_validator
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 import bcrypt
 from prisma.errors import UniqueViolationError
 from database import db # Import the shared db instance
+from api.email_service import send_verification_email
 import re
 import random
 from prisma.models import User
@@ -104,14 +105,41 @@ class UserCreate(BaseModel):
 class GoogleToken(BaseModel):
     token: str
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+class VerifyEmailRequest(BaseModel):
+    email: EmailStr
+    code: str
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    code: str
+    newPassword: str
+
+    # You can add the password validator here as well for consistency
+    @field_validator('newPassword')
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError('password must be at least 8 characters long')
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('password must contain at least one lowercase letter')
+        if not re.search(r'[0-9]', v):
+            raise ValueError('password must contain at least one number')
+        return v
+
+
+@router.post("/register", status_code=status.HTTP_200_OK)
 async def register_user(user_data: UserCreate):
-    # Remove response_model=UserRead from the decorator, as we are returning a JSONResponse directly.
-    # The status_code remains HTTP_201_CREATED.
-    # Check if a user with this email already exists
     existing_user = await db.user.find_unique(where={"email": user_data.email})
     if existing_user:
-        raise HTTPException(
+        # If user exists but is not verified, we can resend the code.
+        # For now, we'll just treat it as a conflict to prevent re-registration attempts.
+        if existing_user.isVerified:
+            raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "status": "error",
@@ -119,30 +147,48 @@ async def register_user(user_data: UserCreate):
                 "errorCode": "EMAIL_EXISTS"
             },
         )
+        # If user is not verified, we could allow this endpoint to trigger a new email.
+        # However, a separate "resend" endpoint is cleaner. For now, we'll return a conflict.
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered. Please verify your email or request a new code.")
 
     hashed_password = get_password_hash(user_data.password)
+    verification_code = f"{random.randint(100000, 999999)}"
+    hashed_code = get_password_hash(verification_code)
+    # Set a 3-minute expiration time for the verification code
+    expires = datetime.utcnow() + timedelta(minutes=3)
 
     try:
         # Assign user to a group
         group = random.choice(["control", "transparency"])
-        new_user = await db.user.create(
+        await db.user.create(
             data={
                 "email": user_data.email,
                 "passwordHash": hashed_password,
                 "group": group,
+                "verificationToken": hashed_code,
+                "verificationTokenExpires": expires,
             }
         )
+
+        # ... inside the /register endpoint, after hashing the code ...
+        print(f"DEBUG: Attempting to send verification email to {user_data.email}")
+        try:
+            await send_verification_email(user_data.email, verification_code)
+            print("DEBUG: Email function call completed without error.")
+        except Exception as e:
+            print(f"!!!!!!!!!!!!!! DEBUG: ERROR SENDING EMAIL !!!!!!!!!!!!!!")
+            print(e)
+            print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+            # Re-raise the exception so the user doesn'g get a false success
+            raise HTTPException(status_code=500, detail="Failed to send email.")
+
+        print("DEBUG: Returning 200 OK to user.")
         return JSONResponse(
-            status_code=status.HTTP_201_CREATED,
-            content={
-                "status": "success",
-                "message": "User registered successfully.",
-                "data": {"userId": new_user.id, "email": new_user.email},
-            },
+            status_code=status.HTTP_200_OK,
+            content={"message": "Verification code sent. Please check your email."}
         )
+
     except UniqueViolationError:
-        # This block handles potential race conditions where two requests try to register
-        # the same email simultaneously and both pass the initial check.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -152,11 +198,147 @@ async def register_user(user_data: UserCreate):
             },
         )
     except Exception as e:
-        # Catch any other unexpected errors
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"status": "error", "message": f"An unexpected error occurred: {e}", "errorCode": "SERVER_ERROR"},
         )
+
+@router.post("/verify-email", status_code=status.HTTP_200_OK)
+async def verify_email(request: VerifyEmailRequest):
+    user = await db.user.find_unique(where={"email": request.email})
+
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
+
+    if user.isVerified:
+        return JSONResponse(status_code=status.HTTP_200_OK, content={"message": "Email is already verified."})
+
+    if not user.verificationToken or not user.verificationTokenExpires:
+         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No pending verification for this user.")
+
+    # Ensure the expiration time is timezone-aware for comparison
+    if user.verificationTokenExpires.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Verification code has expired.")
+
+    if not verify_password(request.code, user.verificationToken):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid verification code.")
+
+    # If code is correct, update the user
+    await db.user.update(
+        where={"id": user.id},
+        data={
+            "isVerified": True,
+            "verificationToken": None,
+            "verificationTokenExpires": None,
+        }
+    )
+
+    return {"message": "Email verified successfully. You can now log in."}
+
+@router.post("/resend-verification", status_code=status.HTTP_200_OK)
+async def resend_verification(request: ForgotPasswordRequest):
+    """
+    Resends a verification code to a user's email.
+    This is for users who did not receive the initial code or whose code expired.
+    """
+    user = await db.user.find_unique(where={"email": request.email})
+
+    # Only proceed if the user exists and is not yet verified.
+    # Otherwise, we do nothing but still return a success message to prevent email enumeration.
+    if user and not user.isVerified:
+        # Generate a new 6-digit random code and a 3-minute expiration time.
+        verification_code = f"{random.randint(100000, 999999)}"
+        hashed_code = get_password_hash(verification_code)
+        expires = datetime.utcnow() + timedelta(minutes=3)
+
+        # Save the new hashed code and expiration time
+        await db.user.update(
+            where={"id": user.id},
+            data={
+                "verificationToken": hashed_code,
+                "verificationTokenExpires": expires,
+            }
+        )
+
+        try:
+            # Send the new plain text code to the user's email
+            await send_verification_email(request.email, verification_code)
+        except Exception as e:
+            # Log the error but do not expose it to the client.
+            print(f"ERROR: Failed to resend verification email to {request.email}. Error: {e}")
+
+    return {"message": "A new verification code has been sent."}
+
+@router.post("/forgot-password", status_code=status.HTTP_200_OK)
+async def forgot_password(request: ForgotPasswordRequest):
+    """
+    Handles the first step of password reset. Generates a verification code
+    and sends it to the user's email if the user exists.
+    """
+    user = await db.user.find_unique(where={"email": request.email})
+
+    if user:
+        # Generate a new 6-digit random code and a 15-minute expiration time.
+        verification_code = f"{random.randint(100000, 999999)}"
+        hashed_code = get_password_hash(verification_code)
+        expires = datetime.utcnow() + timedelta(minutes=15)
+
+        # Save the hashed code and expiration time
+        await db.user.update(
+            where={"id": user.id},
+            data={
+                "verificationToken": hashed_code,
+                "verificationTokenExpires": expires,
+            }
+        )
+
+        try:
+            # Send the plain text code to the user's email
+            await send_verification_email(request.email, verification_code)
+        except Exception as e:
+            # Log the error but do not expose it to the client to prevent information leakage.
+            print(f"ERROR: Failed to send password reset email to {request.email}. Error: {e}")
+
+    return {"message": "If this email is registered, a password reset code has been sent."}
+
+@router.post("/reset-password", status_code=status.HTTP_200_OK)
+async def reset_password(request: ResetPasswordRequest):
+    """
+    Resets the user's password after they have verified their reset code.
+    """
+    user = await db.user.find_unique(where={"email": request.email})
+
+    # Use a generic error message to prevent user enumeration
+    invalid_code_exception = HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid or expired code."
+    )
+
+    if not user or not user.verificationToken or not user.verificationTokenExpires:
+        raise invalid_code_exception
+
+    # Check if the code has expired
+    if user.verificationTokenExpires.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        raise invalid_code_exception
+
+    # Check if the code is correct
+    if not verify_password(request.code, user.verificationToken):
+        raise invalid_code_exception
+
+    # If the code is valid, hash the new password
+    new_hashed_password = get_password_hash(request.newPassword)
+
+    # Update the user's password and clear the verification token fields
+    await db.user.update(
+        where={"id": user.id},
+        data={
+            "passwordHash": new_hashed_password,
+            "verificationToken": None,
+            "verificationTokenExpires": None,
+        }
+    )
+
+    return {"message": "Password reset successful."}
 
 @router.post("/google-login")
 async def google_login(google_token: GoogleToken):
@@ -190,6 +372,7 @@ async def google_login(google_token: GoogleToken):
                 "email": user_email,
                 "name": user_name,
                 "group": group,
+                "isVerified": True, # Google-verified emails are considered trusted
                 # passwordHash can be null for Google-signed-in users
             }
         )
@@ -219,6 +402,9 @@ async def login_for_access_token(form_data: Annotated[OAuth2PasswordRequestForm,
             detail="Invalid email or password.",
             headers={"WWW-Authenticate": "Bearer"}, # Standard header for OAuth2
         )
+    
+    if not user.isVerified:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Please verify your email before logging in.")
 
     # Create a JWT access token
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)

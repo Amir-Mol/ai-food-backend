@@ -17,6 +17,9 @@ model User {
   passwordHash        String?
   group               String   @default("control")
   onboardingCompleted Boolean  @default(false)
+  isVerified          Boolean  @default(false)
+  verificationToken   String?
+  verificationTokenExpires DateTime?
   age                 Int?
   gender              String?
   height              Float?

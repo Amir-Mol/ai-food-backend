@@ -18,6 +18,7 @@ python-jose[cryptography]==3.3.0
 google-auth==2.31.0
 requests==2.32.3
 email-validator==2.2.0
+sendgrid
 
 # Utilities
 pydantic==2.8.2
