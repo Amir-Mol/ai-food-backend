@@ -1,29 +1,47 @@
 import os
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import asyncio
-
 
 async def send_verification_email(to_email: str, verification_code: str):
     """
-    Sends a verification email to the user with a verification code using SendGrid.
+    Sends a verification email using CSC Rahti's internal SMTP server.
     """
-    sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
-    sender_email = os.environ.get("SENDER_EMAIL")
+    # Rahti internal SMTP settings
+    smtp_host = "smtp.rahti.csc.fi"
+    smtp_port = 25  # Port 25 is standard for internal unauthenticated relay
+    
+    sender_email = os.environ.get("SENDER_EMAIL", "noreply@nutrirecom.com")
 
-    if not sendgrid_api_key or not sender_email:
-        print("Error: SENDGRID_API_KEY or SENDER_EMAIL not set in environment variables.")
-        # In a real application, you might want to raise an exception here.
-        return
+    # Create the email message
+    msg = MIMEMultipart()
+    msg["From"] = sender_email
+    msg["To"] = to_email
+    msg["Subject"] = "Your NutriRecom Verification Code"
 
-    message = Mail(
-        from_email=sender_email,
-        to_emails=to_email,
-        subject="Your NutriRecom Verification Code",
-        html_content=f"<p>Thank you for registering with NutriRecom.</p><p>Your verification code is: <strong>{verification_code}</strong></p><p>This code will expire in 10 minutes.</p>"
-    )
+    html_content = f"""
+    <html>
+        <body>
+            <p>Thank you for registering with NutriRecom.</p>
+            <p>Your verification code is: <strong>{verification_code}</strong></p>
+            <p>This code will expire in 10 minutes.</p>
+            <p><i>Note: This is an automated message from the NutriRecom Research Project.</i></p>
+        </body>
+    </html>
+    """
+    
+    msg.attach(MIMEText(html_content, "html"))
+
     try:
-        sg = SendGridAPIClient(sendgrid_api_key)
-        await asyncio.to_thread(sg.client.mail.send.post, request_body=message.get())
+        # Run the blocking SMTP call in a separate thread to avoid blocking FastAPI
+        await asyncio.to_thread(_send_smtp_email, smtp_host, smtp_port, sender_email, to_email, msg)
+        print(f"DEBUG: Email sent successfully to {to_email}")
     except Exception as e:
-        print(f"An error occurred while sending email: {e}")
+        print(f"ERROR: Failed to send email to {to_email}. Error: {e}")
+
+def _send_smtp_email(host, port, sender, recipient, message):
+    """Helper function to run SMTP interaction synchronously."""
+    with smtplib.SMTP(host, port) as server:
+        # No login() needed for Rahti internal SMTP
+        server.sendmail(sender, recipient, message.as_string())
