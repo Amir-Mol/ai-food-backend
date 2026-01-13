@@ -8,9 +8,9 @@ async def send_verification_email(to_email: str, verification_code: str):
     """
     Sends a verification email using CSC Rahti's internal SMTP server.
     """
-    # Rahti internal SMTP settings
-    smtp_host = "smtp.rahti.csc.fi"
-    smtp_port = 25  # Port 25 is standard for internal unauthenticated relay
+    # FIX: Read from Environment Variables (with correct defaults)
+    smtp_host = os.environ.get("SMTP_SERVER", "smtp.csc.fi")
+    smtp_port = int(os.environ.get("SMTP_PORT", 25))
     
     sender_email = os.environ.get("SENDER_EMAIL", "noreply@nutrirecom.com")
 
@@ -39,7 +39,7 @@ async def send_verification_email(to_email: str, verification_code: str):
         print(f"DEBUG: Email sent successfully to {to_email}")
     except Exception as e:
         print(f"ERROR: Failed to send email to {to_email}. Error: {e}")
-
+        
 def _send_smtp_email(host, port, sender, recipient, message):
     """Helper function to run SMTP interaction synchronously."""
     with smtplib.SMTP(host, port) as server:
