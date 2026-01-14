@@ -1,7 +1,7 @@
 import os
 import logging
 from functools import lru_cache
-from openai import AsyncOpenAI, APIError
+from openai import AsyncAzureOpenAI, APIError
 import json
 
 from models.ai_profile import AIUserProfile
@@ -13,28 +13,27 @@ logger = logging.getLogger(__name__)
 ERROR_MESSAGE = "Sorry, I couldn't generate a recipe at this time. Please try again later."
 
 @lru_cache
-def get_openai_client() -> AsyncOpenAI:
+def get_azure_openai_client() -> AsyncAzureOpenAI:
     """
-    Initializes and returns a singleton AsyncOpenAI client.
-    It's wrapped in a function to ensure OPENAI_API_KEY is loaded
-    from the environment before the client is created.
+    Initializes and returns a singleton AsyncAzureOpenAI client.
+    Reads credentials from AZURE_ environment variables.
     """
-    # The client is initialized here, when the function is first called.
-    # By this time, main.py will have already called load_dotenv().
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        # This provides a clearer, immediate error if the key is missing.
-        logger.critical("The OPENAI_API_KEY environment variable is not set.")
-        # The OpenAIError will still be raised by the client, but this log helps pinpoint the issue.
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01-preview")
 
-    return AsyncOpenAI(api_key=api_key)
-
+    if not api_key or not endpoint:
+        logger.critical("Azure OpenAI credentials (API_KEY or ENDPOINT) are missing.")
+    
+    return AsyncAzureOpenAI(
+        api_key=api_key,
+        api_version=api_version,
+        azure_endpoint=endpoint
+    )
 
 async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: list):
     """
-    Generates recipe suggestions using the OpenAI API.
-    The model re-ranks candidate recipes and returns up to 5 recommendations
-    with balanced explanations in JSON format.
+    Generates recipe suggestions using the Microsoft Azure OpenAI Service.
     """
     # Convert the user profile and candidates to a string format for the prompt
     user_profile_str = "\n".join([f"{key}: {value}" for key, value in user_profile.model_dump().items() if value])
@@ -83,25 +82,26 @@ async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: 
     }}    
     """
 
-    client = get_openai_client()
-    ai_model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+    client = get_azure_openai_client()
+    # In Azure, the "model" parameter is actually your "Deployment Name"
+    deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o-deployment")
 
     try:
         response = await client.chat.completions.create(
-            model=ai_model,
+            model=deployment_name,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
             temperature=0.7,
-            max_tokens=1500,  # Increased max_tokens for a more detailed response
+            max_tokens=1500,
             response_format={"type": "json_object"}
         )
         suggestion = response.choices[0].message.content
         return suggestion.strip() if suggestion else ERROR_MESSAGE
     except APIError as e:
-        logger.error(f"An OpenAI API error occurred: {e}")
+        logger.error(f"Azure OpenAI API error: {e}")
         return ERROR_MESSAGE
     except Exception as e:
-        logger.error(f"An unexpected error occurred: {e}")
+        logger.error(f"Unexpected error: {e}")
         return ERROR_MESSAGE
