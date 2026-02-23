@@ -7,7 +7,7 @@ RAW_DATA_DIR = DATA_DIR / "raw"
 PROCESSED_DATA_DIR = DATA_DIR / "processed"
 
 # --- Preprocessing Settings ---
-CONSIDERATION_SET_SIZE = 20
+CONSIDERATION_SET_SIZE = 100
 
 # --- File Paths ---
 RAW_RECIPE_FILE = RAW_DATA_DIR / "Recipe_fooddotcom.xlsx"
