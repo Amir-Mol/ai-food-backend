@@ -68,7 +68,7 @@ class UserProfileUpdate(BaseModel):
 @router.get("/profile", response_model=UserProfileResponse)
 async def get_user_profile(current_user: Annotated[User, Depends(get_current_active_user)]):
     # Count total feedbacks submitted by the user
-    total_feedbacks = await db.training_record.count(where={"userId": current_user.id})
+    total_feedbacks = await db.trainingrecord.count(where={"userId": current_user.id})
     
     return UserProfileResponse(
         name=current_user.name,
