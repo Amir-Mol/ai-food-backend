@@ -40,6 +40,7 @@ class UserProfileResponse(BaseModel):
     dislikedIngredients: Optional[List[str]] = None
     favoriteCuisines: Optional[List[str]] = None
     otherCuisine: Optional[str] = None
+    total_feedbacks_submitted: int = 0
 
 class UserProfileUpdate(BaseModel):
     name: Optional[str] = None
@@ -66,6 +67,9 @@ class UserProfileUpdate(BaseModel):
 
 @router.get("/profile", response_model=UserProfileResponse)
 async def get_user_profile(current_user: Annotated[User, Depends(get_current_active_user)]):
+    # Count total feedbacks submitted by the user
+    total_feedbacks = await db.training_record.count(where={"userId": current_user.id})
+    
     return UserProfileResponse(
         name=current_user.name,
         email=current_user.email,
@@ -81,6 +85,7 @@ async def get_user_profile(current_user: Annotated[User, Depends(get_current_act
         dislikedIngredients=current_user.dislikedIngredients,
         favoriteCuisines=current_user.favoriteCuisines,
         otherCuisine=current_user.otherCuisine,
+        total_feedbacks_submitted=total_feedbacks,
     )
 
 @router.patch("/profile", status_code=status.HTTP_200_OK)
