@@ -24,7 +24,7 @@ router = APIRouter(
 # JWT Configuration
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 30))
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 43200))  # 30 days (43200 minutes)
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 if not SECRET_KEY or not ALGORITHM:
@@ -135,11 +135,10 @@ class ResetPasswordRequest(BaseModel):
 @router.post("/register", status_code=status.HTTP_200_OK)
 async def register_user(user_data: UserCreate):
     existing_user = await db.user.find_unique(where={"email": user_data.email})
-    if existing_user:
-        # If user exists but is not verified, we can resend the code.
-        # For now, we'll just treat it as a conflict to prevent re-registration attempts.
-        if existing_user.isVerified:
-            raise HTTPException(
+    
+    # Check if user already exists and is verified
+    if existing_user and existing_user.isVerified:
+        raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "status": "error",
@@ -147,10 +146,9 @@ async def register_user(user_data: UserCreate):
                 "errorCode": "EMAIL_EXISTS"
             },
         )
-        # If user is not verified, we could allow this endpoint to trigger a new email.
-        # However, a separate "resend" endpoint is cleaner. For now, we'll return a conflict.
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered. Please verify your email or request a new code.")
-
+    
+    # If user exists but is NOT verified, treat as a new registration attempt
+    # Update password, generate new code, and resend verification email
     hashed_password = get_password_hash(user_data.password)
     verification_code = f"{random.randint(100000, 999999)}"
     hashed_code = get_password_hash(verification_code)
@@ -158,19 +156,31 @@ async def register_user(user_data: UserCreate):
     expires = datetime.utcnow() + timedelta(minutes=3)
 
     try:
-        # Assign user to a group
-        group = random.choice(["control", "transparency"])
-        await db.user.create(
-            data={
-                "email": user_data.email,
-                "passwordHash": hashed_password,
-                "group": group,
-                "verificationToken": hashed_code,
-                "verificationTokenExpires": expires,
-            }
-        )
+        if existing_user and not existing_user.isVerified:
+            # User exists but unverified - update password and verification code
+            print(f"DEBUG: Re-registering unverified user with email {user_data.email}")
+            await db.user.update(
+                where={"email": user_data.email},
+                data={
+                    "passwordHash": hashed_password,
+                    "verificationToken": hashed_code,
+                    "verificationTokenExpires": expires,
+                }
+            )
+        else:
+            # New user registration
+            group = random.choice(["control", "transparency"])
+            await db.user.create(
+                data={
+                    "email": user_data.email,
+                    "passwordHash": hashed_password,
+                    "group": group,
+                    "verificationToken": hashed_code,
+                    "verificationTokenExpires": expires,
+                }
+            )
 
-        # ... inside the /register endpoint, after hashing the code ...
+        # Send verification email
         print(f"DEBUG: Attempting to send verification email to {user_data.email}")
         try:
             await send_verification_email(user_data.email, verification_code)
@@ -179,7 +189,7 @@ async def register_user(user_data: UserCreate):
             print(f"!!!!!!!!!!!!!! DEBUG: ERROR SENDING EMAIL !!!!!!!!!!!!!!")
             print(e)
             print(f"!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-            # Re-raise the exception so the user doesn'g get a false success
+            # Re-raise the exception so the user doesn't get a false success
             raise HTTPException(status_code=500, detail="Failed to send email.")
 
         print("DEBUG: Returning 200 OK to user.")
