@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from functools import lru_cache
 from openai import AsyncAzureOpenAI, APIError
 import json
@@ -31,9 +32,125 @@ def get_azure_openai_client() -> AsyncAzureOpenAI:
         azure_endpoint=endpoint
     )
 
+
+# --- JSON Schema for Structured Outputs ---
+RECOMMENDATION_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ranked_recommendations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "recipeId": {
+                        "type": "string",
+                        "description": "The original recipe ID from candidates"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "The name of the recipe"
+                    },
+                    "explanation": {
+                        "type": "string",
+                        "description": "A balanced 4-5 sentence explanation covering taste, health, and drawbacks"
+                    }
+                },
+                "required": ["recipeId", "name", "explanation"],
+                "additionalProperties": False
+            },
+            "description": "Array of ranked recipe recommendations"
+        }
+    },
+    "required": ["ranked_recommendations"],
+    "additionalProperties": False
+}
+
+
+async def _call_azure_openai_with_retry(
+    client: AsyncAzureOpenAI,
+    deployment_name: str,
+    system_prompt: str,
+    user_prompt: str,
+    max_retries: int = 3
+) -> str:
+    """
+    Helper function that calls Azure OpenAI with exponential backoff retry logic.
+    
+    Args:
+        client: AsyncAzureOpenAI client instance
+        deployment_name: Azure deployment name
+        system_prompt: System prompt for the API
+        user_prompt: User prompt for the API
+        max_retries: Maximum number of retry attempts
+    
+    Returns:
+        The API response content or ERROR_MESSAGE if all retries fail
+    """
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"[Attempt {attempt + 1}/{max_retries}] Calling Azure OpenAI API...")
+            
+            response = await client.chat.completions.create(
+                model=deployment_name,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=1500,
+                # Tier 1: Structured Outputs - enforce schema server-side
+                response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "recipe_recommendations",
+                        "schema": RECOMMENDATION_RESPONSE_SCHEMA,
+                        "strict": True
+                    }
+                }
+            )
+            
+            suggestion = response.choices[0].message.content
+            if suggestion:
+                logger.info(f"[Attempt {attempt + 1}] API call successful!")
+                return suggestion.strip()
+            else:
+                logger.warning(f"[Attempt {attempt + 1}] API returned empty content")
+                
+        except APIError as e:
+            logger.warning(f"[Attempt {attempt + 1}] Azure OpenAI API error: {e}")
+            
+            # If this is the last attempt, return error message
+            if attempt == max_retries - 1:
+                logger.error(f"All {max_retries} retry attempts exhausted. Returning error.")
+                return ERROR_MESSAGE
+            
+            # Tier 2: Exponential backoff (1s, 2s, 4s)
+            wait_time = 2 ** attempt
+            logger.info(f"[Attempt {attempt + 1}] Retrying in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+            
+        except Exception as e:
+            logger.error(f"[Attempt {attempt + 1}] Unexpected error: {e}")
+            
+            # If this is the last attempt, return error message
+            if attempt == max_retries - 1:
+                logger.error(f"All {max_retries} retry attempts exhausted. Returning error.")
+                return ERROR_MESSAGE
+            
+            # Exponential backoff
+            wait_time = 2 ** attempt
+            logger.info(f"[Attempt {attempt + 1}] Retrying in {wait_time}s...")
+            await asyncio.sleep(wait_time)
+    
+    return ERROR_MESSAGE
+
+
 async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: list):
     """
-    Generates recipe suggestions using the Microsoft Azure OpenAI Service.
+    Generates recipe suggestions using Azure OpenAI with Structured Outputs and retry logic.
+    
+    Tier 1 (Primary): Uses Structured Outputs to enforce schema validation server-side.
+    Tier 2 (Fallback): Uses exponential backoff retry logic if the API call fails.
     """
     # Convert the user profile and candidates to a string format for the prompt
     user_profile_str = "\n".join([f"{key}: {value}" for key, value in user_profile.model_dump().items() if value])
@@ -54,10 +171,10 @@ async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: 
         "- Always include the original recipeId exactly as given.\n"
         "- All explanations MUST be personalized based on the user's profile.\n"
         "- Address the user directly in the second person ('you', 'your').\n"
-        "- Output ONLY a valid JSON object following the schema."
+        "- Output ONLY valid JSON matching the specified schema."
     )
 
-    # User prompt: inputs + JSON schema
+    # User prompt: inputs + schema info
     user_prompt = f"""
     Here is the user's profile:
     ---USER PROFILE---
@@ -69,7 +186,7 @@ async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: 
     {recipe_candidates_str}
     -----------------------
 
-    Now return the final ranked recommendations in this exact structure:
+    Now return the final ranked recommendations in this exact JSON structure:
 
     {{
       "ranked_recommendations": [
@@ -83,25 +200,13 @@ async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: 
     """
 
     client = get_azure_openai_client()
-    # In Azure, the "model" parameter is actually your "Deployment Name"
     deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o-deployment")
 
-    try:
-        response = await client.chat.completions.create(
-            model=deployment_name,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            temperature=0.7,
-            max_tokens=1500,
-            response_format={"type": "json_object"}
-        )
-        suggestion = response.choices[0].message.content
-        return suggestion.strip() if suggestion else ERROR_MESSAGE
-    except APIError as e:
-        logger.error(f"Azure OpenAI API error: {e}")
-        return ERROR_MESSAGE
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        return ERROR_MESSAGE
+    # Call Azure OpenAI with Structured Outputs (Tier 1) and Retry Logic (Tier 2)
+    return await _call_azure_openai_with_retry(
+        client=client,
+        deployment_name=deployment_name,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        max_retries=3
+    )
