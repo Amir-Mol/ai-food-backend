@@ -7,3 +7,9 @@ venv/
 env/
 appenv/
 oc.exe
+
+# Data files to ignore (backups, debug, raw data)
+data/processed/*_old.*
+data/processed/*_debug.*
+data/raw/*.csv
+

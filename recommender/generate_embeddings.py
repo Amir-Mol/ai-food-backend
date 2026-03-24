@@ -3,9 +3,15 @@ Generates dense vector embeddings for all recipes in a dataset.
 
 This code loads processed recipe data from a parquet file, creates descriptive 
 text documents for each recipe (combining title, description, tags, and ingredients), 
-and uses the SentenceTransformer 'all-MiniLM-L6-v2' model to convert them into 
+and uses the SentenceTransformer 'thenlper/gte-small' model to convert them into 
 vector embeddings. The resulting embeddings are saved to a NumPy file for fast 
 loading in recommendation tasks.
+
+Model: thenlper/gte-small
+- Optimized for semantic search and dense retrieval tasks
+- Better understanding of recipe similarities and ingredient relationships
+- 384-dimensional embeddings (same as all-MiniLM-L6-v2)
+- Superior performance for recommendation systems
 """
 
 import pandas as pd
@@ -42,7 +48,7 @@ def generate_recipe_embeddings(data_path, output_path):
     df = pd.read_parquet(data_path)
 
     print("Loading embedding model...")
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    model = SentenceTransformer('thenlper/gte-small')
 
     print("Creating recipe documents for embedding...")
     df['embedding_document'] = df.apply(create_recipe_document, axis=1)
