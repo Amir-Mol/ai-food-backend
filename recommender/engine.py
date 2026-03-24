@@ -171,6 +171,7 @@ def _format_output(top_recipes_df: pd.DataFrame) -> List[Dict[str, Any]]:
         'ingredients': 'ingredients_title',
         'tags': 'tags',
         'healthScore': 'health_score',
+        # Per-serving fields (kept for backward compatibility)
         'calories_per_serving [cal]': 'calories_per_serving [cal]',
         'totalfat_per_serving [g]': 'totalfat_per_serving [g]',
         'saturatedfat_per_serving [g]': 'saturatedfat_per_serving [g]',
@@ -178,7 +179,16 @@ def _format_output(top_recipes_df: pd.DataFrame) -> List[Dict[str, Any]]:
         'sodium_per_serving [mg]': 'sodium_per_serving [mg]',
         'totalcarbohydrate_per_serving [g]': 'totalcarbohydrate_per_serving [g]',
         'sugars_per_serving [g]': 'sugars_per_serving [g]',
-        'protein_per_serving [g]': 'protein_per_serving [g]'
+        'protein_per_serving [g]': 'protein_per_serving [g]',
+        # Per-100g fields (for API response)
+        'calories_per_100g [cal]': 'calories_per_100g [cal]',
+        'totalfat_per_100g [g]': 'totalfat_per_100g [g]',
+        'saturatedfat_per_100g [g]': 'saturatedfat_per_100g [g]',
+        'cholesterol_per_100g [mg]': 'cholesterol_per_100g [mg]',
+        'sodium_per_100g [mg]': 'sodium_per_100g [mg]',
+        'totalcarbohydrate_per_100g [g]': 'totalcarbohydrate_per_100g [g]',
+        'sugars_per_100g [g]': 'sugars_per_100g [g]',
+        'protein_per_100g [g]': 'protein_per_100g [g]'
     }
     
     output_list = []
