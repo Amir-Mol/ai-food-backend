@@ -157,12 +157,12 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
                     ingredients=full_recipe_data.get("ingredients"),
                     recipeUrl=full_recipe_data.get("recipeUrl"),
                     nutritionalInfo=NutritionalInfo(
-                        calories=full_recipe_data.get("calories_per_serving [cal]"),
-                        protein=full_recipe_data.get("protein_per_serving [g]"),
-                        carbs=full_recipe_data.get("totalcarbohydrate_per_serving [g]"),
-                        fat=full_recipe_data.get("totalfat_per_serving [g]"),
-                        sugars=full_recipe_data.get("sugars_per_serving [g]"),
-                        sodium=full_recipe_data.get("sodium_per_serving [mg]")
+                        calories=full_recipe_data.get("calories_per_100g [cal]"),
+                        protein=full_recipe_data.get("protein_per_100g [g]"),
+                        carbs=full_recipe_data.get("totalcarbohydrate_per_100g [g]"),
+                        fat=full_recipe_data.get("totalfat_per_100g [g]"),
+                        sugars=full_recipe_data.get("sugars_per_100g [g]"),
+                        sodium=full_recipe_data.get("sodium_per_100g [mg]")
                     )
                 )
                 enriched_recommendations.append(enriched_rec)
