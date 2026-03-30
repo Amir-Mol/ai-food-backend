@@ -184,9 +184,6 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
             status_code=status.HTTP_404_NOT_FOUND,
             detail="You have seen all current recommendations. A new set will be ready on your next request."
         )
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="You have seen all current recommendations. A new set will be ready on your next request."
-        )
 
     # --- Create LLM-Optimized Payload ---
     llm_payload = [{
