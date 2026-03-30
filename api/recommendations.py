@@ -2,11 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Optional, Annotated, List, Dict
 import asyncio
+import logging
 from datetime import datetime
 
 from api.auth import get_current_active_user
 from prisma.models import User
 from database import db
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/recommendations",
@@ -132,73 +135,138 @@ async def submit_feedback(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> Dict[str, str]:
     """
-    Submits feedback for a recommendation and updates the corresponding training record.
+    Submits feedback for a recommendation and triggers summarization if needed.
+    
+    PHASE 4 IMPROVEMENTS:
+    - Better logging for feedback submission
+    - Robust feedback counting with error handling
+    - Safe async summarization triggering
+    
+    Flow:
+    1. Find most recent training record for user + recommendation
+    2. Update with feedback scores
+    3. Count feedbacks since last summarization
+    4. Trigger async summarization if count >= 5
     """
-    # Find the most recent training record for this user and recommendation
-    training_record = await db.trainingrecord.find_first(
-        where={
-            "userId": current_user.id,
-            "recommendationId": recommendation_id,
-        },
-        order={"createdAt": "desc"},
+    user_id = current_user.id
+    logger.info(
+        f"[{user_id}] Feedback submission: recommendation={recommendation_id} "
+        f"liked={feedback.liked} health={feedback.healthinessScore}"
     )
+    
+    # Find the most recent training record for this user and recommendation
+    try:
+        training_record = await db.trainingrecord.find_first(
+            where={
+                "userId": current_user.id,
+                "recommendationId": recommendation_id,
+            },
+            order={"createdAt": "desc"},
+        )
+    except Exception as e:
+        logger.error(f"[{user_id}] Failed to fetch training record: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process feedback. Please try again."
+        )
 
     if not training_record:
+        logger.warning(
+            f"[{user_id}] No training record found for recommendation {recommendation_id}"
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No training record found for user {current_user.id} and recommendation {recommendation_id}"
         )
-
-    # Update the found record with the new feedback
-    await db.trainingrecord.update(
-        where={"id": training_record.id},
-        data={
-            "liked": feedback.liked,
-            "healthinessScore": feedback.healthinessScore,
-            "tastinessScore": feedback.tastinessScore,
-            "intentToTryScore": feedback.intentToTryScore,
-        },
-    )
-
-    # --- Version2: Check if feedback summarization should trigger ---
-    # Count feedbacks since last summarization
-    last_summary_time = current_user.feedbackSummaryLastUpdatedAt or datetime(1970, 1, 1)
-    feedbacks_since_summary = await db.trainingrecord.count(
-        where={
-            "userId": current_user.id,
-            "createdAt": {"gte": last_summary_time},
-            "liked": {"not": None}  # Only count records with actual feedback
-        }
-    )
     
-    # If 5 or more feedbacks accumulated, trigger summarization
-    if feedbacks_since_summary >= 5:
-        from tasks.recommendation_generator import trigger_feedback_summarization
+    # Update the found record with the new feedback
+    try:
+        await db.trainingrecord.update(
+            where={"id": training_record.id},
+            data={
+                "liked": feedback.liked,
+                "healthinessScore": feedback.healthinessScore,
+                "tastinessScore": feedback.tastinessScore,
+                "intentToTryScore": feedback.intentToTryScore,
+            },
+        )
+        logger.debug(f"[{user_id}] Training record {training_record.id} updated with feedback")
+    except Exception as e:
+        logger.error(f"[{user_id}] Failed to update training record: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save feedback. Please try again."
+        )
+
+    # --- Version2: PHASE 4 - Check if feedback summarization should trigger ---
+    # Count feedbacks since last summarization with robust error handling
+    try:
+        last_summary_time = current_user.feedbackSummaryLastUpdatedAt or datetime(1970, 1, 1)
         
-        # Get the 5 recent feedbacks for summarization
-        recent_feedbacks = await db.trainingrecord.find_many(
+        feedbacks_since_summary = await db.trainingrecord.count(
             where={
                 "userId": current_user.id,
                 "createdAt": {"gte": last_summary_time},
-                "liked": {"not": None}
-            },
-            order_by={"createdAt": "desc"},
-            take=5
+                "liked": {"not": None}  # Only count records with actual feedback
+            }
         )
         
-        # Convert to format for summarization
-        feedback_dicts = []
-        for fb in recent_feedbacks:
-            feedback_dicts.append({
-                "recipe_name": fb.recommendationName,
-                "action": "liked" if fb.liked else "disliked",
-                "rating": fb.intentToTryScore,
-                "notes": None
-            })
-        
-        # Trigger async summarization (fire-and-forget)
-        asyncio.create_task(
-            trigger_feedback_summarization(current_user.id, feedback_dicts)
+        logger.debug(
+            f"[{user_id}] Feedback count since last summary: {feedbacks_since_summary} "
+            f"(last summary: {last_summary_time})"
         )
+        
+        # If 5 or more feedbacks accumulated, trigger summarization
+        if feedbacks_since_summary >= 5:
+            logger.info(f"[{user_id}] Threshold reached ({feedbacks_since_summary} >= 5); triggering summarization")
+            
+            from tasks.recommendation_generator import trigger_feedback_summarization
+            
+            # Get the 5 recent feedbacks for summarization
+            try:
+                recent_feedbacks = await db.trainingrecord.find_many(
+                    where={
+                        "userId": current_user.id,
+                        "createdAt": {"gte": last_summary_time},
+                        "liked": {"not": None}
+                    },
+                    order_by={"createdAt": "desc"},
+                    take=5
+                )
+                logger.debug(f"[{user_id}] Fetched {len(recent_feedbacks)} recent feedbacks for summarization")
+            except Exception as e:
+                logger.error(f"[{user_id}] Failed to fetch recent feedbacks: {str(e)}")
+                recent_feedbacks = []
+            
+            # PHASE 4: Validate feedback list before summarization
+            if recent_feedbacks:
+                # Convert to format for summarization
+                feedback_dicts = []
+                for fb in recent_feedbacks:
+                    feedback_dicts.append({
+                        "recipe_name": fb.recommendationName,
+                        "action": "liked" if fb.liked else "disliked",
+                        "rating": fb.intentToTryScore,
+                        "notes": None
+                    })
+                
+                # Trigger async summarization (fire-and-forget)
+                logger.info(f"[{user_id}] Fire-and-forget async summarization task created")
+                asyncio.create_task(
+                    trigger_feedback_summarization(current_user.id, feedback_dicts)
+                )
+            else:
+                logger.warning(f"[{user_id}] Threshold met but no feedbacks to summarize")
+        else:
+            logger.debug(
+                f"[{user_id}] Threshold not reached ({feedbacks_since_summary} < 5); "
+                f"waiting for more feedback"
+            )
+    
+    except Exception as e:
+        logger.error(f"[{user_id}] Error in feedback summarization trigger: {str(e)}", exc_info=True)
+        # Don't fail the user request - just log the error
+        pass
 
+    logger.info(f"[{user_id}] Feedback submitted successfully")
     return {"status": "success", "message": "Feedback received successfully."}
