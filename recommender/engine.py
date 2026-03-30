@@ -113,16 +113,6 @@ def _calculate_score(
         return 0.0
     if 'No Pork' in user_diet and 'Contains Pork' in recipe_tags:
         return 0.0
-
-    # Custom Forbidden Ingredients Check (from the 'other' field)
-    other_restrictions_str = dietary_restrictions.get('other')
-    if other_restrictions_str:
-        # Parse the comma-separated string into a clean set of forbidden ingredients
-        forbidden_ingredients = {item.strip().lower() for item in other_restrictions_str.split(',')}
-        
-        # Check if any forbidden ingredient is in the recipe's ingredients list
-        if any(forbidden in recipe['ingredients_title'] for forbidden in forbidden_ingredients):
-            return 0.0 # Eliminate the recipe if a match is found
     
     # --- Soft Constraints & Scoring ---
     # The score is now primarily driven by semantic similarity.
@@ -132,6 +122,13 @@ def _calculate_score(
     user_dislikes = set(dislike.lower() for dislike in user_profile.get('dislikedIngredients', []))
     if user_dislikes and any(dislike in recipe['ingredients_title'] for dislike in user_dislikes):
         score *= 0.3 # Apply significant penalty
+
+    # Custom Forbidden Ingredients Penalty (from the 'other' field) - now a soft constraint
+    other_restrictions_str = dietary_restrictions.get('other')
+    if other_restrictions_str:
+        forbidden_ingredients = {item.strip().lower() for item in other_restrictions_str.split(',')}
+        if any(forbidden in recipe['ingredients_title'] for forbidden in forbidden_ingredients):
+            score *= 0.3 # Apply same penalty as regular dislikes
 
     # Health Goal Penalty: Safely get list of health conditions.
     health_conditions_profile = dietary_profile.get('healthConditions') or {}
