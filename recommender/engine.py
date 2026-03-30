@@ -20,7 +20,7 @@ from config import CONSIDERATION_SET_SIZE
 # It is assumed that the model is loaded once when the application starts.
 embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
 
-def _create_user_document(user_profile: Dict[str, Any]) -> str:
+def _create_user_document(user_profile: Dict[str, Any], feedback_summary: Optional[str] = None) -> str:
     """Creates a single text string from a user's profile for embedding."""
     likes = ', '.join(user_profile.get('likedIngredients', []))
     cuisines = ', '.join(user_profile.get('favoriteCuisines', []))
@@ -36,6 +36,11 @@ def _create_user_document(user_profile: Dict[str, Any]) -> str:
         f"Their dietary profile includes: {diet_info}. "
         f"They have an activity level of {user_profile.get('activityLevel', 'unknown')}."
     )
+    
+    # Add feedback summary if available (evolved preferences)
+    if feedback_summary:
+        document += f" Recent preferences: {feedback_summary}"
+    
     return document
 
 def _estimate_per_meal_calorie_target(user_profile: Dict[str, Any]) -> Optional[float]:
@@ -212,14 +217,22 @@ def generate_consideration_set(
     user_profile: Dict[str, Any],
     recipes_df: pd.DataFrame,
     recipe_embeddings: np.ndarray,
-    consideration_set_size: int = CONSIDERATION_SET_SIZE
+    consideration_set_size: int = CONSIDERATION_SET_SIZE,
+    feedback_summary: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     The main function for the Stage 1 Filtering Engine.
     Orchestrates the process of generating a personalized 'Consideration Set'.
+    
+    Args:
+        user_profile: User's profile data
+        recipes_df: DataFrame of recipes
+        recipe_embeddings: Pre-computed recipe embeddings
+        consideration_set_size: Number of recipes to return
+        feedback_summary: Optional summarized feedback for preference evolution
     """
     # Generate User Embedding in real-time
-    user_document = _create_user_document(user_profile)
+    user_document = _create_user_document(user_profile, feedback_summary)
     user_embedding = embedding_model.encode(user_document).reshape(1, -1)
 
     # Estimate the user's calorie target 

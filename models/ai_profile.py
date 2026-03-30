@@ -30,3 +30,4 @@ class AIUserProfile(BaseModel):
     likedIngredients: Optional[List[str]] = None
     dislikedIngredients: Optional[List[str]] = None
     favoriteCuisines: Optional[List[str]] = None
+    feedbackSummaryForLLM: Optional[str] = None  # Version2: Feedback summary for enhanced LLM reasoning

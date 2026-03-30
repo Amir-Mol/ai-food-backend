@@ -2,6 +2,7 @@ import json
 import pandas as pd
 import numpy as np
 import logging
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, ValidationError, Field
 from typing import List, Annotated, Dict, Any, Optional, Union
@@ -16,9 +17,6 @@ from config import PROCESSED_RECIPE_FILE, RECIPE_EMBEDDINGS_FILE
 
 
 router = APIRouter()
-
-# --- Simple In-Memory Cache ---
-CONSIDERATION_SET_CACHE = {}
 
 # --- LOAD DATA ON STARTUP ---
 try:
@@ -80,25 +78,45 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
         )
 
     user_id = current_user.id
+    
+    # --- Version2: Timer Gate Check ---
+    # Prevent rapid-fire requests; users can request new recommendations every 1 hour
+    if (current_user.nextAllowedGenerationAt and 
+        current_user.nextAllowedGenerationAt > datetime.utcnow()):
+        wait_seconds = (current_user.nextAllowedGenerationAt - datetime.utcnow()).total_seconds()
+        wait_minutes = int(wait_seconds // 60)
+        wait_seconds_remainder = int(wait_seconds % 60)
+        
+        detail_msg = f"Please wait {wait_minutes} minute{'s' if wait_minutes != 1 else ''}"
+        if wait_seconds_remainder > 0:
+            detail_msg += f" and {wait_seconds_remainder} second{'s' if wait_seconds_remainder != 1 else ''}"
+        detail_msg += " before requesting new recommendations."
+        
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=detail_msg
+        )
+    
+    # --- Get previously seen recipes ---
     feedback_entries = await db.trainingrecord.find_many(where={'userId': user_id})
     seen_recipe_ids = {f.recommendationId for f in feedback_entries}
 
-    if user_id in CONSIDERATION_SET_CACHE:
-        print(f"Cache HIT for user {user_id}")
-        consideration_set = CONSIDERATION_SET_CACHE[user_id]
-    else:
-        print(f"Cache MISS for user {user_id}")
-        user_profile_dict = current_user.model_dump()
-        consideration_set = generate_consideration_set(user_profile=user_profile_dict, recipes_df=RECIPES_DF, recipe_embeddings=RECIPE_EMBEDDINGS)
-        CONSIDERATION_SET_CACHE[user_id] = consideration_set
+    # --- Version2: ALWAYS generate fresh consideration set (no caching) ---
+    # This allows LLM to discover from full pool, not a fixed 100
+    user_profile_dict = current_user.model_dump()
+    
+    # Pass feedbackSummaryForEmbedding to Stage 1 (semantic search)
+    consideration_set = generate_consideration_set(
+        user_profile=user_profile_dict,
+        recipes_df=RECIPES_DF,
+        recipe_embeddings=RECIPE_EMBEDDINGS,
+        feedback_summary=current_user.feedbackSummaryForEmbedding
+    )
 
     final_consideration_set = [recipe for recipe in consideration_set if str(recipe.get('recipeId')) not in seen_recipe_ids]
     
     # --- Handle consideration set exhaustion ---    
     if not final_consideration_set:
-        # If the user has seen all recipes, invalidate the cache and tell them to try again.
-        if user_id in CONSIDERATION_SET_CACHE:
-            del CONSIDERATION_SET_CACHE[user_id]
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="You have seen all current recommendations. A new set will be ready on your next request."
@@ -117,6 +135,10 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
 
     user_profile_dict = current_user.model_dump()
     user_profile_for_ai = AIUserProfile.model_validate(user_profile_dict)
+    
+    # Version2: Add feedback summary to user profile for LLM reasoning
+    if current_user.feedbackSummaryForLLM:
+        user_profile_for_ai.feedbackSummaryForLLM = current_user.feedbackSummaryForLLM
 
     suggestion = await get_recipe_suggestion(user_profile=user_profile_for_ai, recipe_candidates=llm_payload)
 

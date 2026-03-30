@@ -210,3 +210,119 @@ async def get_recipe_suggestion(user_profile: AIUserProfile, recipe_candidates: 
         user_prompt=user_prompt,
         max_retries=3
     )
+
+
+async def summarize_feedback_history(
+    previous_summary: dict | None,
+    new_feedbacks: list,
+    user_preferences: dict
+) -> dict:
+    """
+    Uses LLM to synthesize feedback into two complementary summaries.
+    
+    This function creates:
+    1. embedding_summary: 1-2 sentences for Stage 1 semantic search
+    2. llm_summary: 3-5 sentences detailed for Stage 2 reasoning
+    
+    Takes previous summary + 5 new feedback items, iteratively updates.
+    
+    Args:
+        previous_summary: Last computed summary dict with 'embedding_summary' and 'llm_summary' keys, or None if first time
+        new_feedbacks: List of dicts with: {recipe_name, action, rating, notes}
+        user_preferences: User profile dict for context (likedIngredients, favoriteCuisines, activityLevel)
+    
+    Returns:
+        {
+            "embedding_summary": str,  # ~1-2 sentences (~100 chars)
+            "llm_summary": str,        # ~3-5 sentences (~300-400 chars)
+            "feedback_count": int
+        }
+    
+    Raises:
+        Exception: If LLM call fails after retries
+    """
+    try:
+        # Build feedback list for prompt
+        feedback_items = "\n".join([
+            f"- {fb.get('recipe_name', 'Unknown')}: {fb.get('action', 'rated')} "
+            f"(rating: {fb.get('rating', 'N/A')}, notes: {fb.get('notes', 'None')})"
+            for fb in new_feedbacks
+        ])
+        
+        previous_summary_text = "None (first time summarization)"
+        if previous_summary:
+            previous_summary_text = f"Embedding: {previous_summary.get('embedding_summary', 'N/A')}\nLLM: {previous_summary.get('llm_summary', 'N/A')}"
+        
+        likes_str = ', '.join(user_preferences.get('likedIngredients', []) or [])
+        cuisines_str = ', '.join(user_preferences.get('favoriteCuisines', []) or [])
+        activity = user_preferences.get('activityLevel', 'unknown')
+        
+        system_prompt = (
+            "You are an expert nutritionist and chef analyzing user food preferences from feedback. "
+            "Your task is to synthesize user feedback into two concise, distinct summaries: "
+            "one optimized for vector embedding, one for LLM reasoning. "
+            "Be precise. Capture preference evolution. Avoid redundancy."
+        )
+        
+        user_prompt = f"""Analyze this user's evolving food preferences and create 2 summaries.
+
+PREVIOUS SUMMARY (if any):
+{previous_summary_text}
+
+NEW FEEDBACK (5 recent interactions):
+{feedback_items}
+
+USER BACKGROUND:
+- Likes: {likes_str if likes_str else 'Not specified'}
+- Prefers: {cuisines_str if cuisines_str else 'Not specified'} cuisines
+- Activity: {activity}
+
+CRITICAL INSTRUCTIONS:
+1. EMBEDDING_SUMMARY (max 2 sentences, ~100 chars):
+   - Concise, keyword-focused for semantic vector search
+   - Capture DISTINCT preferences (cuisines, ingredients, dietary goals)
+   - Avoid overlap with LLM summary
+   - Format: "User prefers [cuisines/ingredients]. They [dietary goal/activity]."
+
+2. LLM_SUMMARY (3-5 sentences, ~300-400 chars):
+   - Detailed reasoning for recipe recommendations
+   - Include specific recipe TYPES or DISHES they liked/disliked
+   - Reference dietary goals and health constraints
+   - Mention preference EVOLUTION if evident from feedback
+   - Personalized but not repetitive
+
+Return ONLY valid JSON:
+{{
+    "embedding_summary": "...",
+    "llm_summary": "..."
+}}"""
+        
+        client = get_azure_openai_client()
+        deployment_name = os.getenv("AZURE_DEPLOYMENT_NAME", "gpt-4o-deployment")
+        
+        logger.info(f"[Feedback Summarization] Calling Azure OpenAI...")
+        response = await client.chat.completions.create(
+            model=deployment_name,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.3,  # Lower for consistent summarization
+            max_tokens=800,
+        )
+        
+        response_text = response.choices[0].message.content.strip()
+        
+        # Handle markdown code blocks if present
+        if response_text.startswith("```json"):
+            response_text = response_text.replace("```json", "").replace("```", "").strip()
+        
+        result = json.loads(response_text)
+        result["feedback_count"] = len(new_feedbacks)
+        
+        logger.info(f"[Feedback Summarization] Summary generated successfully")
+        return result
+        
+    except Exception as e:
+        logger.error(f"[Feedback Summarization] Error: {str(e)}")
+        raise
