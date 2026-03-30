@@ -32,6 +32,18 @@ model User {
   dislikedIngredients String[]
   favoriteCuisines    String[]
   otherCuisine        String?
+
+  // Version2: Feedback summarization fields
+  feedbackSummaryForEmbedding    String?    @db.Text    // 1-2 sentence summary for Stage 1 semantic search
+  feedbackSummaryForLLM          String?    @db.Text    // 3-5 sentence summary for Stage 2 LLM reasoning
+  feedbackSummaryLastUpdatedAt   DateTime?              // Track when summary was last created (for counting feedbacks)
+
+  // Version2: Recommendation generation status tracking
+  recommendationGenerationStatus String     @default("idle")  // "idle" | "summarizing" | "generating" | "ready"
+  recommendationsReadyAt         DateTime?              // When current round of recommendations became available
+  nextAllowedGenerationAt        DateTime?              // When user can request new recommendations (1-hour gate)
+  recommendations                Json?                  // Store JSON array of top 5 suggestions
+
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   feedback            Feedback[]
