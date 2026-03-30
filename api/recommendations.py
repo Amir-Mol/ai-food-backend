@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Optional, Annotated, List, Dict
+import asyncio
+from datetime import datetime
 
 from api.auth import get_current_active_user
 from prisma.models import User
@@ -157,5 +159,46 @@ async def submit_feedback(
             "intentToTryScore": feedback.intentToTryScore,
         },
     )
+
+    # --- Version2: Check if feedback summarization should trigger ---
+    # Count feedbacks since last summarization
+    last_summary_time = current_user.feedbackSummaryLastUpdatedAt or datetime(1970, 1, 1)
+    feedbacks_since_summary = await db.trainingrecord.count(
+        where={
+            "userId": current_user.id,
+            "createdAt": {"gte": last_summary_time},
+            "liked": {"not": None}  # Only count records with actual feedback
+        }
+    )
+    
+    # If 5 or more feedbacks accumulated, trigger summarization
+    if feedbacks_since_summary >= 5:
+        from tasks.recommendation_generator import trigger_feedback_summarization
+        
+        # Get the 5 recent feedbacks for summarization
+        recent_feedbacks = await db.trainingrecord.find_many(
+            where={
+                "userId": current_user.id,
+                "createdAt": {"gte": last_summary_time},
+                "liked": {"not": None}
+            },
+            order_by={"createdAt": "desc"},
+            take=5
+        )
+        
+        # Convert to format for summarization
+        feedback_dicts = []
+        for fb in recent_feedbacks:
+            feedback_dicts.append({
+                "recipe_name": fb.recommendationName,
+                "action": "liked" if fb.liked else "disliked",
+                "rating": fb.intentToTryScore,
+                "notes": None
+            })
+        
+        # Trigger async summarization (fire-and-forget)
+        asyncio.create_task(
+            trigger_feedback_summarization(current_user.id, feedback_dicts)
+        )
 
     return {"status": "success", "message": "Feedback received successfully."}

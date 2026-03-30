@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel, field_validator, EmailStr
 from typing import Optional, Annotated, List
 import json
+import asyncio
 
 from api.auth import get_current_active_user
-from api.recipes import CONSIDERATION_SET_CACHE # Import the cache
 from prisma.models import User
 from database import db
 
@@ -105,11 +105,35 @@ async def update_user_profile(
         where={"id": current_user.id},
         data=update_dict,
     )
-
-    # --- Cache Invalidation ---
-    if current_user.id in CONSIDERATION_SET_CACHE:
-        print(f"Invalidating cache for user {current_user.id}")
-        del CONSIDERATION_SET_CACHE[current_user.id]
-    # --- End Cache Invalidation ---
     
-    return {"status": "success", "message": "Profile updated and recommendation cache cleared."}
+    return {"status": "success", "message": "Profile updated successfully."}
+
+
+@router.post("/complete-onboarding", status_code=status.HTTP_200_OK)
+async def complete_onboarding(current_user: Annotated[User, Depends(get_current_active_user)]):
+    """
+    Called by frontend after final onboarding screen.
+    Triggers auto-generation of initial recommendations (asynchronously).
+    
+    Response:
+    {
+        "status": "success",
+        "message": "Recommendations generation started. Check /recommendation-status for progress."
+    }
+    
+    Frontend should:
+    1. Show loading spinner
+    2. Poll GET /api/recommendation-status every 3 seconds
+    3. Auto-navigate to recommendations screen when status == "ready"
+    """
+    from tasks.recommendation_generator import trigger_recommendation_generation_on_onboarding
+    
+    # Trigger async generation (fire-and-forget)
+    asyncio.create_task(
+        trigger_recommendation_generation_on_onboarding(current_user.id)
+    )
+    
+    return {
+        "status": "success",
+        "message": "Recommendations generation started. Check /api/recommendation-status for progress."
+    }
