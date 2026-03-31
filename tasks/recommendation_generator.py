@@ -16,14 +16,27 @@ from typing import Optional, List, Dict, Any
 import logging
 import json
 import time
+import pandas as pd
+import numpy as np
 
 from database import db
-from recommender.engine import generate_consideration_set, RECIPES_DF, RECIPE_EMBEDDINGS
+from recommender.engine import generate_consideration_set
 from ai_service_client import get_recipe_suggestion
 from models.ai_profile import AIUserProfile
-from config import CONSIDERATION_SET_SIZE
+from config import CONSIDERATION_SET_SIZE, PROCESSED_RECIPE_FILE, RECIPE_EMBEDDINGS_FILE
 
 logger = logging.getLogger(__name__)
+
+# Load recipe data and embeddings on module import
+try:
+    RECIPES_DF = pd.read_parquet(PROCESSED_RECIPE_FILE)
+    RECIPES_DF.set_index('recipe_id', inplace=True)
+    RECIPE_EMBEDDINGS = np.load(RECIPE_EMBEDDINGS_FILE)
+    logger.info("Recipe data and embeddings loaded successfully")
+except FileNotFoundError as e:
+    logger.error(f"Failed to load recipe data: {e}")
+    RECIPES_DF = None
+    RECIPE_EMBEDDINGS = None
 
 # Retry configuration
 MAX_RETRIES = 3
