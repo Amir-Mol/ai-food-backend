@@ -14,60 +14,98 @@ class MockAzureOpenAI:
     
     def __init__(self):
         self.call_count = 0
-        self.last_user_profile = None
-        self.last_recipe_candidates = None
+        self.chat = self._MockChat()
     
-    async def chat_completions_create(
-        self,
-        model: str,
-        messages: list,
-        temperature: float,
-        max_tokens: int,
-        response_format: dict = None
-    ) -> dict:
-        """Mock response for recipe suggestions"""
-        self.call_count += 1
+    class _MockChat:
+        def __init__(self):
+            self.completions = self._MockCompletions()
         
-        # Extract user profile and candidates from messages
-        user_msg = messages[1]["content"]
-        
-        # Parse the user prompt to extract recipe IDs
-        # The candidates are in JSON format in the prompt
-        try:
-            candidates_start = user_msg.find("---RECIPE CANDIDATES---") + len("---RECIPE CANDIDATES---")
-            candidates_end = user_msg.find("-----------------------")
-            candidates_json = user_msg[candidates_start:candidates_end].strip()
-            candidates = json.loads(candidates_json)
-        except:
-            # Fallback: use first 5 if parsing fails
-            candidates = []
-        
-        # Create deterministic recommendations from first 5 candidates
-        recommendations = []
-        for i, recipe in enumerate(candidates[:5]):
-            recommendations.append({
-                "recipeId": str(recipe.get("recipeId", f"recipe_{i}")),
-                "name": recipe.get("name", f"Recipe {i+1}"),
-                "explanation": (
-                    f"This is a perfectly suited recipe for your dietary preferences. "
-                    f"It contains ingredients you love and aligns with your health goals. "
-                    f"The nutritional profile is excellent, providing balanced macronutrients. "
-                    f"This recipe scored high on our ranking for your specific profile. "
-                    f"We recommend trying it next time you're planning a meal."
-                )
-            })
-        
-        response_data = {
-            "ranked_recommendations": recommendations
-        }
-        
-        # Create mock response object
-        mock_response = AsyncMock()
-        mock_response.choices = [AsyncMock()]
-        mock_response.choices[0].message = AsyncMock()
-        mock_response.choices[0].message.content = json.dumps(response_data)
-        
-        return mock_response
+        class _MockCompletions:
+            async def create(
+                self,
+                model: str,
+                messages: list,
+                temperature: float,
+                max_tokens: int,
+                response_format: dict = None
+            ):
+                """Mock response for recipe suggestions and feedback summaries"""
+                
+                # Extract user message content
+                user_msg = messages[1]["content"]
+                
+                # Check if this is a recipe suggestion or feedback summarization call
+                if "RECIPE CANDIDATES" in user_msg:
+                    # Recipe suggestion call
+                    recommendations = self._create_recipe_recommendations(user_msg)
+                    response_data = {
+                        "ranked_recommendations": recommendations
+                    }
+                else:
+                    # Feedback summarization call
+                    response_data = self._create_feedback_summary()
+                
+                # Create mock response object with proper structure
+                class MockChoice:
+                    def __init__(self, content):
+                        self.message = MockMessage(content)
+                
+                class MockMessage:
+                    def __init__(self, content):
+                        self.content = content
+                
+                class MockResponse:
+                    def __init__(self, content):
+                        self.choices = [MockChoice(content)]
+                
+                return MockResponse(json.dumps(response_data))
+            
+            @staticmethod
+            def _create_recipe_recommendations(user_msg: str) -> list:
+                """Extract recipe candidates from prompt and create recommendations"""
+                try:
+                    # Parse the candidates from the prompt
+                    candidates_start = user_msg.find("---RECIPE CANDIDATES---") + len("---RECIPE CANDIDATES---")
+                    candidates_end = user_msg.find("-----------------------")
+                    candidates_json = user_msg[candidates_start:candidates_end].strip()
+                    candidates = json.loads(candidates_json)
+                except:
+                    # Fallback if parsing fails
+                    candidates = []
+                
+                # Create deterministic recommendations from first 5 candidates
+                recommendations = []
+                for i, recipe in enumerate(candidates[:5]):
+                    recommendations.append({
+                        "recipeId": str(recipe.get("recipeId", f"recipe_{i}")),
+                        "name": recipe.get("name", f"Recipe {i+1}"),
+                        "explanation": (
+                            f"This recipe perfectly matches your taste profile and dietary goals. "
+                            f"It incorporates ingredients you enjoy while maintaining nutritional balance. "
+                            f"The preparation method is straightforward and healthy. "
+                            f"Based on your preference history, this scored highly in our ranking. "
+                            f"We highly recommend this for your next meal."
+                        )
+                    })
+                
+                return recommendations
+            
+            @staticmethod
+            def _create_feedback_summary() -> dict:
+                """Create a deterministic feedback summary"""
+                return {
+                    "embedding_summary": (
+                        "User prefers recipes with healthy, fresh ingredients and moderate portion sizes. "
+                        "They have shown interest in Mediterranean and Asian cuisines."
+                    ),
+                    "llm_summary": (
+                        "The user is developing a preference for plant-based meals and Mediterranean cuisine. "
+                        "They show consistent interest in recipes with fresh vegetables and lean proteins. "
+                        "The user appears health-conscious and willing to explore diverse cuisines. "
+                        "Future recommendations should emphasize Mediterranean and Asian plant-forward dishes. "
+                        "Their recent feedback indicates strong preferences for balanced nutrition."
+                    )
+                }
 
 
 def mock_get_azure_openai_client():

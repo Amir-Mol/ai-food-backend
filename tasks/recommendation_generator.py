@@ -158,7 +158,6 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
             "height": user.height,
             "age": user.age,
             "gender": user.gender,
-            "foodAllergies": user.foodAllergies or {},
             "dietaryProfile": user.dietaryProfile or {},
         }
         

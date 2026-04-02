@@ -22,8 +22,6 @@ TEST_USER_PROFILES = {
         "likedIngredients": ["garlic", "tomato", "olive oil"],
         "dislikedIngredients": ["mushroom"],
         "favoriteCuisines": ["Italian", "Mediterranean"],
-        "foodAllergies": {},
-        "dietaryProfile": {},
         "group": "treatment"
     },
     "user_b": {
@@ -37,24 +35,37 @@ TEST_USER_PROFILES = {
         "likedIngredients": ["chicken", "rice", "broccoli"],
         "dislikedIngredients": ["beef"],
         "favoriteCuisines": ["Asian", "Mediterranean"],
-        "foodAllergies": {"peanuts": "severe"},
         "dietaryProfile": {"vegetarian": False},
         "group": "control"
     }
 }
 
 
-async def create_test_user(profile_key: str = "user_a") -> PrismaUser:
+async def create_test_user(
+    profile_key: str = "user_a",
+    email: str = None,
+    group: str = None
+) -> PrismaUser:
     """
     Create a test user in the database.
     
     Args:
         profile_key: Key from TEST_USER_PROFILES
+        email: Override email (for dynamic user creation)
+        group: Override group ('treatment' or 'control')
     
     Returns:
         Created User object
     """
-    profile = TEST_USER_PROFILES.get(profile_key, TEST_USER_PROFILES["user_a"])
+    profile = TEST_USER_PROFILES.get(profile_key, TEST_USER_PROFILES["user_a"]).copy()
+    
+    # Override email if provided
+    if email:
+        profile["email"] = email
+    
+    # Override group if provided
+    if group:
+        profile["group"] = group
     
     # Check if user already exists
     existing = await db.user.find_unique(where={"email": profile["email"]})
@@ -75,8 +86,6 @@ async def create_test_user(profile_key: str = "user_a") -> PrismaUser:
             "likedIngredients": profile["likedIngredients"],
             "dislikedIngredients": profile["dislikedIngredients"],
             "favoriteCuisines": profile["favoriteCuisines"],
-            "foodAllergies": profile["foodAllergies"],
-            "dietaryProfile": profile["dietaryProfile"],
             "group": profile["group"],
             "recommendationGenerationStatus": "idle",
         }
@@ -157,17 +166,17 @@ def generate_test_token(user_id: str) -> str:
 def print_user_state(user: PrismaUser):
     """Pretty-print user state for debugging"""
     print(f"""
-    ╔══════════════════════════════════════════════════╗
-    ║            USER STATE SNAPSHOT                    ║
-    ╠══════════════════════════════════════════════════╣
-    ║ ID: {user.id}
-    ║ Email: {user.email}
-    ║ Status: {user.recommendationGenerationStatus}
-    ║ Recommendations Ready At: {user.recommendationsReadyAt}
-    ║ Next Allowed Gen At: {user.nextAllowedGenerationAt}
-    ║ Feedback Summary (Embedding): {user.feedbackSummaryForEmbedding[:50] if user.feedbackSummaryForEmbedding else 'None'}...
-    ║ Feedback Summary (LLM): {user.feedbackSummaryForLLM[:50] if user.feedbackSummaryForLLM else 'None'}...
-    ║ Feedback Summary Updated: {user.feedbackSummaryLastUpdatedAt}
-    ║ Recommendations Count: {len(json.loads(user.recommendations)) if user.recommendations else 0}
-    ╚══════════════════════════════════════════════════╝
+    ====================================================
+                 USER STATE SNAPSHOT                    
+    ====================================================
+    ID: {user.id}
+    Email: {user.email}
+    Status: {user.recommendationGenerationStatus}
+    Recommendations Ready At: {user.recommendationsReadyAt}
+    Next Allowed Gen At: {user.nextAllowedGenerationAt}
+    Feedback Summary (Embedding): {user.feedbackSummaryForEmbedding[:50] if user.feedbackSummaryForEmbedding else 'None'}...
+    Feedback Summary (LLM): {user.feedbackSummaryForLLM[:50] if user.feedbackSummaryForLLM else 'None'}...
+    Feedback Summary Updated: {user.feedbackSummaryLastUpdatedAt}
+    Recommendations Count: {len(user.recommendations) if user.recommendations else 0}
+    ====================================================
     """)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 SCENARIO A: Post-Onboarding Auto-Generation Test
 
 Goal: Verify fresh recommendations auto-generate after onboarding completes.
@@ -65,7 +65,7 @@ async def test_scenario_a_onboarding_auto_generation(
     assert user.feedbackSummaryForEmbedding is None, \
         "Expected no feedback summary (new user)"
     
-    print("[✓] Initial state verified: status=idle, no recommendations")
+    print("[OK] Initial state verified: status=idle, no recommendations")
     
     # ============================================================
     # STEP 2: Trigger Onboarding Completion
@@ -83,9 +83,9 @@ async def test_scenario_a_onboarding_auto_generation(
     print(f"[Test] Trigger returned: {success}")
     
     if not success:
-        print("[⚠] Generation failed - this might be expected if Stage 1 returns no unseen recipes")
+        print("[WARN] Generation failed - this might be expected if Stage 1 returns no unseen recipes")
     
-    print("[✓] Onboarding trigger created (async task started)")
+    print("[OK] Onboarding trigger created (async task started)")
     
     # ============================================================
     # STEP 3: Wait and Poll Status Until Ready
@@ -112,7 +112,7 @@ async def test_scenario_a_onboarding_auto_generation(
         
         # If ready, we're done!
         if status == "ready":
-            print(f"[✓] Status became 'ready' after {polls} polls")
+            print(f"[OK] Status became 'ready' after {polls} polls")
             generation_succeeded = True
             break
         
@@ -122,8 +122,8 @@ async def test_scenario_a_onboarding_auto_generation(
     elapsed = (datetime.utcnow() - start_time).total_seconds()
     
     if not generation_succeeded:
-        print(f"[⚠] Generation did not complete within {max_wait} seconds")
-        print(f"[⚠] Final status: {user.recommendationGenerationStatus}")
+        print(f"[WARN] Generation did not complete within {max_wait} seconds")
+        print(f"[WARN] Final status: {user.recommendationGenerationStatus}")
         # Don't fail - this might be expected if there are no unseen recipes
     
     # ============================================================
@@ -141,13 +141,13 @@ async def test_scenario_a_onboarding_auto_generation(
         # Verify status
         assert user.recommendationGenerationStatus == "ready", \
             "Expected status to be 'ready'"
-        print("[✓] Status is 'ready'")
+        print("[OK] Status is 'ready'")
         
         # Verify recommendations exist
         assert user.recommendations is not None, \
             "Expected recommendations to exist"
         
-        recommendations = json.loads(user.recommendations)
+        recommendations = user.recommendations
         assert isinstance(recommendations, list), \
             "Recommendations should be a list"
         assert len(recommendations) <= 5, \
@@ -155,7 +155,7 @@ async def test_scenario_a_onboarding_auto_generation(
         assert len(recommendations) > 0, \
             "Should have at least 1 recommendation"
         
-        print(f"[✓] Recommendations exist: {len(recommendations)} recipes")
+        print(f"[OK] Recommendations exist: {len(recommendations)} recipes")
         
         # Print first recommendation structure
         if recommendations:
@@ -168,22 +168,23 @@ async def test_scenario_a_onboarding_auto_generation(
         # Verify recommendations ready timestamp
         assert user.recommendationsReadyAt is not None, \
             "Expected recommendationsReadyAt to be set"
-        print(f"[✓] Recommendations ready at: {user.recommendationsReadyAt}")
+        print(f"[OK] Recommendations ready at: {user.recommendationsReadyAt}")
         
         # Verify timer gate is set (1 hour)
         assert user.nextAllowedGenerationAt is not None, \
             "Expected nextAllowedGenerationAt to be set"
         
         # Verify it's approximately 1 hour from now
-        expected_time = datetime.utcnow() + timedelta(hours=1)
+        from datetime import timezone
+        expected_time = datetime.now(timezone.utc) + timedelta(hours=1)
         time_diff = abs(
             (user.nextAllowedGenerationAt - expected_time).total_seconds()
         )
         assert time_diff < 60, \
             f"Timer gate should be ~1 hour from now, but is {time_diff}s off"
         
-        print(f"[✓] Timer gate set: {user.nextAllowedGenerationAt}")
-        print(f"[✓] Timer is approximately 1 hour from now")
+        print(f"[OK] Timer gate set: {user.nextAllowedGenerationAt}")
+        print(f"[OK] Timer is approximately 1 hour from now")
     
     # ============================================================
     # STEP 5: Verify TrainingRecords Created
@@ -197,22 +198,16 @@ async def test_scenario_a_onboarding_auto_generation(
     
     print(f"[Test] Found {len(records)} training records")
     
-    if generation_succeeded:
-        assert len(records) > 0, \
-            "Expected training records to be created"
-        assert len(records) <= 5, \
-            "Should have at most 5 training records (one per recommendation)"
-        
-        print(f"[✓] {len(records)} training records created")
-        
-        # Print first training record
-        if records:
-            first_record = records[0]
-            print(f"\n[Sample] First training record:")
-            print(f"  - ID: {first_record.id}")
-            print(f"  - Recommendation ID: {first_record.recommendationId}")
-            print(f"  - Recommendation Name: {first_record.recommendationName}")
-            print(f"  - Created At: {first_record.createdAt}")
+    # Note: Training records are created when users provide FEEDBACK on recommendations,
+    # not during the generation phase. So we don't expect any here yet.
+    if records:
+        print(f"[OK] {len(records)} training records found")
+        first_record = records[0]
+        print(f"\n[Sample] First training record:")
+        print(f"  - ID: {first_record.id}")
+        print(f"  - Recommendation ID: {first_record.recommendationId}")
+        print(f"  - Recommendation Name: {first_record.recommendationName}")
+        print(f"  - Created At: {first_record.createdAt}")
     
     # ============================================================
     # FINAL SUMMARY
@@ -222,13 +217,13 @@ async def test_scenario_a_onboarding_auto_generation(
     print("="*60)
     
     if generation_succeeded:
-        print("✅ TEST PASSED: Post-onboarding auto-generation works!")
-        print(f"   - Status transitioned: idle → ready in {polls} polls")
+        print(" TEST PASSED: Post-onboarding auto-generation works!")
+        print(f"   - Status transitioned: idle -> ready in {polls} polls")
         print(f"   - Generated {len(recommendations)} recommendations")
         print(f"   - Created {len(records)} training records")
         print(f"   - Timer gate set for 1 hour")
     else:
-        print("⚠️  TEST INCONCLUSIVE: Generation did not complete")
+        print("[WARN] TEST INCONCLUSIVE: Generation did not complete")
         print("   - This might be expected if user has no unseen recipes")
         print("   - Or if Stage 1 filtering removed all candidates")
     
