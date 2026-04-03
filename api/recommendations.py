@@ -269,4 +269,17 @@ async def submit_feedback(
         pass
 
     logger.info(f"[{user_id}] Feedback submitted successfully")
-    return {"status": "success", "message": "Feedback received successfully."}
+    
+    # Refetch user to include any updated nextAllowedGenerationAt
+    try:
+        updated_user = await db.user.find_unique(where={"id": user_id})
+        response = {
+            "status": "success",
+            "message": "Feedback received successfully."
+        }
+        if updated_user and updated_user.nextAllowedGenerationAt:
+            response["nextAllowedGenerationAt"] = updated_user.nextAllowedGenerationAt.isoformat()
+        return response
+    except Exception as e:
+        logger.warning(f"[{user_id}] Failed to refetch user for response: {str(e)}")
+        return {"status": "success", "message": "Feedback received successfully."}

@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, ValidationError, Field
 from typing import List, Annotated, Dict, Any, Optional, Union
@@ -59,6 +59,7 @@ class FinalRankedRecommendation(BaseModel):
 
 class FinalRecommendationsResponse(BaseModel):
     recommendations: List[FinalRankedRecommendation]
+    nextAllowedGenerationAt: Optional[datetime] = None
 
 # --- Pydantic Models for AI Interaction ---
 
@@ -320,7 +321,24 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
         logger.error(f"[{user_id}] Batch save error: {str(e)}")
         # Continue - don't fail the user request if we can't save records
     
+    # Set timer for next generation (1 hour from now)
+    next_allowed = datetime.utcnow() + timedelta(hours=1)
+    
+    # Update user record with timer
+    try:
+        await db.user.update(
+            where={"id": user_id},
+            data={"nextAllowedGenerationAt": next_allowed}
+        )
+        logger.debug(f"[{user_id}] Timer set: next generation allowed at {next_allowed}")
+    except Exception as e:
+        logger.error(f"[{user_id}] Failed to set timer: {str(e)}")
+        # Continue - don't fail request if timer update fails
+    
     elapsed = time.time() - start_time
     logger.info(f"[{user_id}] Success: Generated {len(enriched_recommendations)} recommendations in {elapsed:.2f}s")
     
-    return FinalRecommendationsResponse(recommendations=enriched_recommendations)
+    return FinalRecommendationsResponse(
+        recommendations=enriched_recommendations,
+        nextAllowedGenerationAt=next_allowed
+    )
