@@ -322,7 +322,7 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
         # Continue - don't fail the user request if we can't save records
     
     # Set timer for next generation (1 hour from now)
-    next_allowed = datetime.now(timezone.utc) + timedelta(hours=1)
+    next_allowed = datetime.now(timezone.utc) + timedelta(minutes=2)
     
     # Update user record with timer
     try:
