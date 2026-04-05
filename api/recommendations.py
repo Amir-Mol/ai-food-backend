@@ -230,7 +230,7 @@ async def submit_feedback(
                         "createdAt": {"gte": last_summary_time},
                         "liked": {"not": None}
                     },
-                    order_by={"createdAt": "desc"},
+                    order={"createdAt": "desc"},
                     take=5
                 )
                 logger.debug(f"[{user_id}] Fetched {len(recent_feedbacks)} recent feedbacks for summarization")
