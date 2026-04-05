@@ -7,7 +7,7 @@ PHASE 4: Added logging for polling patterns and generation lifecycle tracking.
 
 import logging
 from fastapi import APIRouter, Depends, HTTPException
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Optional
 
 from api.auth import get_current_active_user
@@ -57,8 +57,8 @@ async def get_recommendation_status(current_user: Annotated[User, Depends(get_cu
         logger.info(f"[{user_id}] Status poll: recommendations ready (ready at {current_user.recommendationsReadyAt})")
     elif status in ["summarizing", "generating"]:
         logger.debug(f"[{user_id}] Status poll: {status} in progress")
-    elif current_user.nextAllowedGenerationAt and current_user.nextAllowedGenerationAt > datetime.utcnow():
-        wait_time = (current_user.nextAllowedGenerationAt - datetime.utcnow()).total_seconds() / 60
+    elif current_user.nextAllowedGenerationAt and current_user.nextAllowedGenerationAt > datetime.now(timezone.utc):
+        wait_time = (current_user.nextAllowedGenerationAt - datetime.now(timezone.utc)).total_seconds() / 60
         logger.debug(f"[{user_id}] Status poll: rate-limited ({wait_time:.1f}m remaining)")
     else:
         logger.debug(f"[{user_id}] Status poll: idle")

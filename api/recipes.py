@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel, ValidationError, Field
 from typing import List, Annotated, Dict, Any, Optional, Union
@@ -106,8 +106,8 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
     # --- PHASE 4: Enhanced Timer Gate Check ---
     # Validates nextAllowedGenerationAt is in the future
     try:
-        if current_user.nextAllowedGenerationAt and current_user.nextAllowedGenerationAt > datetime.utcnow():
-            wait_seconds = (current_user.nextAllowedGenerationAt - datetime.utcnow()).total_seconds()
+        if current_user.nextAllowedGenerationAt and current_user.nextAllowedGenerationAt > datetime.now(timezone.utc):
+            wait_seconds = (current_user.nextAllowedGenerationAt - datetime.now(timezone.utc)).total_seconds()
             wait_minutes = int(wait_seconds // 60)
             wait_seconds_remainder = int(wait_seconds % 60)
             
@@ -322,7 +322,7 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
         # Continue - don't fail the user request if we can't save records
     
     # Set timer for next generation (1 hour from now)
-    next_allowed = datetime.utcnow() + timedelta(hours=1)
+    next_allowed = datetime.now(timezone.utc) + timedelta(hours=1)
     
     # Update user record with timer
     try:
