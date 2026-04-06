@@ -284,10 +284,76 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
         else:
             logger.debug(f"[{user_id}] Stage 2: LLM ranked {len(recommendations)} recommendations")
         
+        # Step 5.5: ENRICHMENT - Add missing fields from recipe database
+        # This mirrors the POST endpoint's enrichment step to ensure consistency
+        logger.debug(f"[{user_id}] Starting data enrichment for {len(recommendations)} recommendations")
+        enriched_recommendations = []
+        consideration_set_map = {str(rec['recipeId']): rec for rec in final_consideration_set}
+        
+        for rec in recommendations:
+            recipe_id = str(rec.get('recipeId'))
+            full_recipe_data = consideration_set_map.get(recipe_id)
+            
+            if full_recipe_data:
+                # Enrich with full recipe data
+                enriched_rec = {
+                    "recipeId": recipe_id,
+                    "name": rec.get("name", full_recipe_data.get("name")),
+                    "personalisedReason": rec.get("personalisedReason", "Recommended for you"),
+                    "imageUrl": full_recipe_data.get("imageUrl"),
+                    "healthScore": full_recipe_data.get("healthScore", 6),
+                    "ingredients": full_recipe_data.get("ingredients", []),
+                    "recipeUrl": full_recipe_data.get("recipeUrl"),
+                    "nutritionalInfo": {
+                        "calories": full_recipe_data.get("calories_per_100g [cal]"),
+                        "protein": full_recipe_data.get("protein_per_100g [g]"),
+                        "carbs": full_recipe_data.get("totalcarbohydrate_per_100g [g]"),
+                        "fat": full_recipe_data.get("totalfat_per_100g [g]"),
+                        "sugars": full_recipe_data.get("sugars_per_100g [g]"),
+                        "sodium": full_recipe_data.get("sodium_per_100g [mg]")
+                    }
+                }
+                enriched_recommendations.append(enriched_rec)
+            else:
+                logger.warning(f"[{user_id}] Recipe {recipe_id} not found in enrichment map, using lean data")
+                # Fallback to lean data if recipe not found
+                enriched_recommendations.append(rec)
+        
+        logger.debug(f"[{user_id}] Data enrichment complete: {len(enriched_recommendations)} recommendations enriched")
+        
+        # Step 5.6: CREATE TRAINING RECORDS
+        # This ensures feedback submission will find matching records
+        logger.debug(f"[{user_id}] Creating {len(enriched_recommendations)} training records")
+        try:
+            user_profile_snapshot_json = json.dumps(user_profile_for_ai.model_dump())
+            saved_count = 0
+            
+            for rec in enriched_recommendations:
+                try:
+                    await db.trainingrecord.create(
+                        data={
+                            "userId": user.id,
+                            "userProfileSnapshot": user_profile_snapshot_json,
+                            "recommendationId": str(rec.get("recipeId")),
+                            "recommendationName": rec.get("name"),
+                            "explanation": rec.get("personalisedReason"),
+                            "group": user.group,
+                        }
+                    )
+                    saved_count += 1
+                except Exception as rec_error:
+                    logger.warning(f"[{user_id}] Failed to create record for recipe {rec.get('recipeId')}: {str(rec_error)}")
+                    continue
+            
+            logger.info(f"[{user_id}] Created {saved_count}/{len(enriched_recommendations)} training records")
+        except Exception as e:
+            logger.error(f"[{user_id}] Batch training record creation error: {str(e)}")
+            # Continue - don't fail if we can't save training records
+        
         # Step 6: Save to database
         # --- PHASE A: Timer gate for rate limiting (2 minutes for testing, 1 hour in production) ---
         next_allowed = datetime.utcnow() + timedelta(minutes=2)  # Change to timedelta(hours=1) for production
-        recommendations_json = json.dumps(recommendations)
+        recommendations_json = json.dumps(enriched_recommendations)
         
         # --- PHASE A STEP 2: Track cycle progress ---
         # Calculate new totals for cycle tracking
