@@ -131,7 +131,22 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
             logger.error(f"[{user_id}] User not found in database")
             return False
         
+        # --- PHASE A STEP 5: Check experiment completion (cycle limit at 100) ---
+        # Prevent generation if user has already reached 100 recommendations
+        if user.isExperimentComplete or user.totalRecommendationsGenerated >= 100:
+            logger.warning(
+                f"[{user_id}] Experiment already complete: "
+                f"{user.totalRecommendationsGenerated}/100 recommendations, "
+                f"cycle {user.currentCycleNumber}/20. Skipping generation."
+            )
+            return False
+        
         logger.info(f"[{user_id}] Starting recommendation generation")
+        logger.debug(
+            f"[{user_id}] Current progress: "
+            f"{user.totalRecommendationsGenerated}/100 recommendations, "
+            f"cycle {user.currentCycleNumber}/20"
+        )
         
         # Update status to "generating"
         await db.user.update(
@@ -273,6 +288,21 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
         next_allowed = datetime.utcnow() + timedelta(hours=1)
         recommendations_json = json.dumps(recommendations)
         
+        # --- PHASE A STEP 2: Track cycle progress ---
+        # Calculate new totals for cycle tracking
+        num_recommendations_generated = len(recommendations)
+        new_total = user.totalRecommendationsGenerated + num_recommendations_generated
+        new_cycle_number = new_total // 5  # 5 items per cycle
+        is_experiment_complete = new_total >= 100
+        
+        logger.debug(
+            f"[{user_id}] Cycle tracking: "
+            f"generated {num_recommendations_generated}, "
+            f"total {new_total}/100, "
+            f"cycle {new_cycle_number}/20, "
+            f"experiment_complete={is_experiment_complete}"
+        )
+        
         try:
             await db.user.update(
                 where={"id": user_id},
@@ -280,13 +310,16 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
                     "recommendations": recommendations_json,  # Store as JSON
                     "recommendationsReadyAt": datetime.utcnow(),
                     "nextAllowedGenerationAt": next_allowed,
-                    "recommendationGenerationStatus": "ready"
+                    "recommendationGenerationStatus": "ready",
+                    "totalRecommendationsGenerated": new_total,
+                    "currentCycleNumber": new_cycle_number,
+                    "isExperimentComplete": is_experiment_complete
                 }
             )
             elapsed = time.time() - start_time
             logger.info(
                 f"[{user_id}] Success: Generated {len(recommendations)} recommendations "
-                f"in {elapsed:.2f}s. Next allowed: {next_allowed}"
+                f"in {elapsed:.2f}s. Cycle {new_cycle_number}/20, Total {new_total}/100. Next allowed: {next_allowed}"
             )
             return True
             

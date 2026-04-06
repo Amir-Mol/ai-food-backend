@@ -103,6 +103,25 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
             detail="Recommendation data is not available. Please contact support."
         )
     
+    # --- PHASE A STEP 5: Check experiment completion (cycle limit at 100) ---
+    # Prevent further generation if user has reached 100 recommendations
+    if current_user.isExperimentComplete or current_user.totalRecommendationsGenerated >= 100:
+        logger.warning(
+            f"[{user_id}] Experiment already complete: "
+            f"{current_user.totalRecommendationsGenerated}/100 recommendations, "
+            f"cycle {current_user.currentCycleNumber}/20"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Thank you for your participation! You have completed the recommendation experiment (100 recommendations). Your feedback has been valuable."
+        )
+    
+    logger.debug(
+        f"[{user_id}] Experiment progress: "
+        f"{current_user.totalRecommendationsGenerated}/100 recommendations, "
+        f"cycle {current_user.currentCycleNumber}/20"
+    )
+    
     # --- PHASE 4: Enhanced Timer Gate Check ---
     # Validates nextAllowedGenerationAt is in the future
     try:
@@ -324,16 +343,37 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
     # Set timer for next generation (1 hour from now)
     next_allowed = datetime.now(timezone.utc) + timedelta(minutes=2)
     
-    # Update user record with timer
+    # --- PHASE A STEP 2: Track cycle progress ---
+    # Calculate new totals for cycle tracking
+    num_recommendations_generated = len(enriched_recommendations)
+    new_total = current_user.totalRecommendationsGenerated + num_recommendations_generated
+    new_cycle_number = new_total // 5  # 5 items per cycle
+    is_experiment_complete = new_total >= 100
+    
+    logger.debug(
+        f"[{user_id}] Cycle tracking: "
+        f"generated {num_recommendations_generated}, "
+        f"total {new_total}/100, "
+        f"cycle {new_cycle_number}/20, "
+        f"experiment_complete={is_experiment_complete}"
+    )
+    
+    # Update user record with timer and cycle tracking
     try:
         await db.user.update(
             where={"id": user_id},
-            data={"nextAllowedGenerationAt": next_allowed}
+            data={
+                "nextAllowedGenerationAt": next_allowed,
+                "totalRecommendationsGenerated": new_total,
+                "currentCycleNumber": new_cycle_number,
+                "isExperimentComplete": is_experiment_complete
+            }
         )
         logger.debug(f"[{user_id}] Timer set: next generation allowed at {next_allowed}")
+        logger.info(f"[{user_id}] Cycle tracking updated: {new_total}/100 recommendations, cycle {new_cycle_number}/20")
     except Exception as e:
-        logger.error(f"[{user_id}] Failed to set timer: {str(e)}")
-        # Continue - don't fail request if timer update fails
+        logger.error(f"[{user_id}] Failed to update user with cycle tracking: {str(e)}")
+        # Continue - don't fail request if update fails
     
     elapsed = time.time() - start_time
     logger.info(f"[{user_id}] Success: Generated {len(enriched_recommendations)} recommendations in {elapsed:.2f}s")

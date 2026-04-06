@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Annotated, List, Dict
 import asyncio
 import logging
+import json
 from datetime import datetime
 
 from api.auth import get_current_active_user
@@ -51,53 +52,77 @@ class FeedbackCreate(BaseModel):
     tastinessScore: int = Field(..., ge=1, le=5)
     intentToTryScore: int = Field(..., ge=1, le=5)
 
-# A mock database of all meals. In a real application, this would be a database table.
-MOCK_MEALS_DB = [
-    {
-        "id": "meal_001", "name": "Grilled Chicken Salad", "imageUrl": "https://images.unsplash.com/photo-1551248429-4097c682f62c", "fsaHealthScore": 9
-    },
-    {
-        "id": "meal_002", "name": "Quinoa Bowl with Roasted Vegetables", "imageUrl": "https://images.unsplash.com/photo-1512621776951-a57141f2eefd", "fsaHealthScore": 11
-    },
-    {
-        "id": "meal_003", "name": "Lentil Soup", "imageUrl": "https://images.unsplash.com/photo-1608797178823-dec1638c560a", "fsaHealthScore": 7
-    },
-    {
-        "id": "meal_004", "name": "Apple Slices with Peanut Butter", "imageUrl": "https://images.unsplash.com/photo-1558985250-27a416a95336", "fsaHealthScore": 8
-    },
-    {
-        "id": "meal_005", "name": "Greek Yogurt with Berries", "imageUrl": "https://images.unsplash.com/photo-1587435323762-62c6351a4d78", "fsaHealthScore": 10
-    },
-]
-
-
-def get_ai_recommendations(user: User, mealType: Optional[str] = None) -> RecommendationsResponse:
-    """
-    Mock AI engine to generate meal recommendations.
-    In a real application, this would involve a call to a machine learning model.
-    """
-    if mealType and "snack" in mealType.lower():
-        recs = [
-            meal for meal in MOCK_MEALS_DB if meal["id"] in ["meal_004", "meal_005"]
-        ]
-    else:
-        recs = [
-            meal for meal in MOCK_MEALS_DB if meal["id"] in ["meal_001", "meal_002", "meal_003"]
-        ]
-
-    return RecommendationsResponse(
-        status="success",
-        showTransparencyFeatures=True,
-        recommendations=recs,
-    )
-
 @router.get("/", response_model=RecommendationsResponse)
 async def get_recommendations(
     current_user: Annotated[User, Depends(get_current_active_user)],
     mealType: Optional[str] = None,
 ) -> RecommendationsResponse:
-    """Returns recommendations based on user profile."""
-    return get_ai_recommendations(user=current_user, mealType=mealType)
+    """
+    Returns pre-generated recommendations for the user.
+    
+    PHASE A STEP 3: Returns real recommendations stored in user.recommendations (JSON field)
+    instead of mock data.
+    
+    Flow:
+    1. Check if user.recommendations exists and is not empty
+    2. IF yes: Parse JSON and return recommendations
+    3. IF no: Return status info (not ready or error)
+    
+    Note: mealType parameter is deprecated (not used for Prisma-based recommendations)
+    """
+    user_id = current_user.id
+    
+    # Check if recommendations are available
+    if not current_user.recommendations:
+        logger.warning(f"[{user_id}] No pre-generated recommendations found")
+        
+        # Return error with status info for debugging
+        return RecommendationsResponse(
+            status="no-recommendations",
+            showTransparencyFeatures=True,
+            recommendations=[]
+        )
+    
+    try:
+        # Parse recommendations from JSON
+        if isinstance(current_user.recommendations, str):
+            recommendations_list = json.loads(current_user.recommendations)
+        else:
+            recommendations_list = current_user.recommendations
+        
+        logger.debug(f"[{user_id}] Retrieved {len(recommendations_list)} pre-generated recommendations")
+        
+        # Convert to MealRecommendation format
+        # Assuming recommendations are already in the right format from generation
+        meal_recommendations = []
+        for rec in recommendations_list:
+            try:
+                meal_rec = MealRecommendation(
+                    id=str(rec.get("recipeId", "")),
+                    name=rec.get("name", "Unknown Recipe"),
+                    imageUrl=rec.get("imageUrl", "https://via.placeholder.com/300"),
+                    fsaHealthScore=int(rec.get("healthScore", 6))  # Default to 6 if missing
+                )
+                meal_recommendations.append(meal_rec)
+            except Exception as e:
+                logger.warning(f"[{user_id}] Failed to parse recommendation: {str(e)}")
+                continue
+        
+        logger.info(f"[{user_id}] Returning {len(meal_recommendations)} recommendations")
+        
+        return RecommendationsResponse(
+            status="success",
+            showTransparencyFeatures=True,
+            recommendations=meal_recommendations
+        )
+        
+    except Exception as e:
+        logger.error(f"[{user_id}] Failed to parse recommendations: {str(e)}")
+        return RecommendationsResponse(
+            status="error",
+            showTransparencyFeatures=True,
+            recommendations=[]
+        )
 
 @router.get("/{id}", response_model=MealRecommendationDetail)
 async def get_recommendation_detail(id: str):

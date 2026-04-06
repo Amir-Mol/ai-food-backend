@@ -44,6 +44,11 @@ model User {
   nextAllowedGenerationAt        DateTime?              // When user can request new recommendations (1-hour gate)
   recommendations                Json?                  // Store JSON array of top 5 suggestions
 
+  // Version2: Cycle tracking for recommendation experiment (20 cycles × 5 items = 100 total)
+  totalRecommendationsGenerated Int        @default(0)  // Total recommendations across all cycles (increment by 5 per cycle)
+  currentCycleNumber             Int        @default(0)  // Current cycle number (0-20)
+  isExperimentComplete           Boolean    @default(false)  // Set to true when totalRecommendationsGenerated >= 100
+
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   feedback            Feedback[]
