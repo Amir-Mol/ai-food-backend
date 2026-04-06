@@ -21,8 +21,8 @@ router = APIRouter(
 class MealRecommendation(BaseModel):
     id: str
     name: str
-    imageUrl: str
-    fsaHealthScore: int = Field(..., ge=4, le=12)
+    imageUrl: Optional[str] = "https://via.placeholder.com/300"  # Default image URL
+    fsaHealthScore: int = Field(default=6, ge=0, le=20)  # Relaxed validation (0-20) to accept database values
 
 class NutritionalInfo(BaseModel):
     """Detailed nutritional information for a meal."""
@@ -60,8 +60,8 @@ async def get_recommendations(
     """
     Returns pre-generated recommendations for the user.
     
-    PHASE A STEP 3: Returns real recommendations stored in user.recommendations (JSON field)
-    instead of mock data.
+    PHASE C STEP 1: Returns real recommendations stored in user.recommendations (JSON field)
+    instead of generating fresh. Instant fetch for better UX.
     
     Flow:
     1. Check if user.recommendations exists and is not empty
@@ -71,6 +71,7 @@ async def get_recommendations(
     Note: mealType parameter is deprecated (not used for Prisma-based recommendations)
     """
     user_id = current_user.id
+    logger.info(f"[{user_id}] GET /recommendations - Fetching pre-generated recommendations")
     
     # Check if recommendations are available
     if not current_user.recommendations:
@@ -100,15 +101,15 @@ async def get_recommendations(
                 meal_rec = MealRecommendation(
                     id=str(rec.get("recipeId", "")),
                     name=rec.get("name", "Unknown Recipe"),
-                    imageUrl=rec.get("imageUrl", "https://via.placeholder.com/300"),
+                    imageUrl=rec.get("imageUrl"),  # Will use default if missing
                     fsaHealthScore=int(rec.get("healthScore", 6))  # Default to 6 if missing
                 )
                 meal_recommendations.append(meal_rec)
             except Exception as e:
-                logger.warning(f"[{user_id}] Failed to parse recommendation: {str(e)}")
+                logger.warning(f"[{user_id}] Failed to parse recommendation: {str(e)}, data: {rec}")
                 continue
         
-        logger.info(f"[{user_id}] Returning {len(meal_recommendations)} recommendations")
+        logger.info(f"[{user_id}] ✅ Returning {len(meal_recommendations)} pre-generated recommendations")
         
         return RecommendationsResponse(
             status="success",
@@ -117,7 +118,7 @@ async def get_recommendations(
         )
         
     except Exception as e:
-        logger.error(f"[{user_id}] Failed to parse recommendations: {str(e)}")
+        logger.error(f"[{user_id}] ❌ Failed to parse recommendations: {str(e)}", exc_info=True)
         return RecommendationsResponse(
             status="error",
             showTransparencyFeatures=True,
