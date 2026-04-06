@@ -285,7 +285,8 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
             logger.debug(f"[{user_id}] Stage 2: LLM ranked {len(recommendations)} recommendations")
         
         # Step 6: Save to database
-        next_allowed = datetime.utcnow() + timedelta(hours=1)
+        # --- PHASE A: Timer gate for rate limiting (2 minutes for testing, 1 hour in production) ---
+        next_allowed = datetime.utcnow() + timedelta(minutes=2)  # Change to timedelta(hours=1) for production
         recommendations_json = json.dumps(recommendations)
         
         # --- PHASE A STEP 2: Track cycle progress ---
