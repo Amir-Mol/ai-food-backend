@@ -105,20 +105,17 @@ async def get_recommendations(
         meal_recommendations = []
         for idx, rec in enumerate(recommendations_list):
             try:
-                # Ensure we have required fields
-                recipe_id = str(rec.get("recipeId", f"recipe_{idx}"))
-                name = str(rec.get("name", f"Recipe {idx+1}"))
-                image_url = rec.get("imageUrl") or "https://via.placeholder.com/300"
-                health_score = int(rec.get("healthScore", 6))
-                
-                # Clamp health score to valid range
-                health_score = max(0, min(20, health_score))
-                
+                # Return ALL fields from the stored recommendation (not just 4)
+                # The stored structure includes: recipeId, name, description, ingredients, healthScore, personalisedReason, etc.
                 meal_rec = {
-                    "recipeId": recipe_id,  # Fixed: was "id", frontend expects "recipeId"
-                    "name": name,
-                    "imageUrl": image_url,
-                    "healthScore": health_score  # Fixed: was "fsaHealthScore", frontend expects "healthScore"
+                    "recipeId": str(rec.get("recipeId", f"recipe_{idx}")),
+                    "name": str(rec.get("name", f"Recipe {idx+1}")),
+                    "explanation": str(rec.get("personalisedReason", "Recommended for you")),  # LLM explanation
+                    "imageUrl": rec.get("imageUrl") or "https://via.placeholder.com/300",
+                    "healthScore": max(0, min(20, int(rec.get("healthScore", 6)))),  # Clamp to 0-20
+                    "ingredients": rec.get("ingredients", []) if isinstance(rec.get("ingredients"), list) else [],
+                    "recipeUrl": str(rec.get("recipeUrl", "")),
+                    "nutritionalInfo": rec.get("nutritionalInfo", {}),  # Pass through or empty
                 }
                 meal_recommendations.append(meal_rec)
             except Exception as e:
