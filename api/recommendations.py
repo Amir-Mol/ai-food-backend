@@ -52,11 +52,11 @@ class FeedbackCreate(BaseModel):
     tastinessScore: int = Field(..., ge=1, le=5)
     intentToTryScore: int = Field(..., ge=1, le=5)
 
-@router.get("/", response_model=RecommendationsResponse)
+@router.get("/")
 async def get_recommendations(
     current_user: Annotated[User, Depends(get_current_active_user)],
     mealType: Optional[str] = None,
-) -> RecommendationsResponse:
+):
     """
     Returns pre-generated recommendations for the user.
     
@@ -73,57 +73,73 @@ async def get_recommendations(
     user_id = current_user.id
     logger.info(f"[{user_id}] GET /recommendations - Fetching pre-generated recommendations")
     
-    # Check if recommendations are available
-    if not current_user.recommendations:
-        logger.warning(f"[{user_id}] No pre-generated recommendations found")
-        
-        # Return error with status info for debugging
-        return RecommendationsResponse(
-            status="no-recommendations",
-            showTransparencyFeatures=True,
-            recommendations=[]
-        )
-    
     try:
+        # Check if recommendations are available
+        if not current_user.recommendations:
+            logger.warning(f"[{user_id}] No pre-generated recommendations found")
+            
+            # Return empty list with status
+            return {
+                "status": "no-recommendations",
+                "showTransparencyFeatures": True,
+                "recommendations": []
+            }
+        
         # Parse recommendations from JSON
         if isinstance(current_user.recommendations, str):
-            recommendations_list = json.loads(current_user.recommendations)
+            try:
+                recommendations_list = json.loads(current_user.recommendations)
+            except json.JSONDecodeError as e:
+                logger.error(f"[{user_id}] ❌ Failed to parse recommendations JSON: {str(e)}")
+                return {
+                    "status": "error",
+                    "showTransparencyFeatures": True,
+                    "recommendations": []
+                }
         else:
-            recommendations_list = current_user.recommendations
+            recommendations_list = current_user.recommendations if isinstance(current_user.recommendations, list) else []
         
         logger.debug(f"[{user_id}] Retrieved {len(recommendations_list)} pre-generated recommendations")
         
         # Convert to MealRecommendation format
-        # Assuming recommendations are already in the right format from generation
         meal_recommendations = []
-        for rec in recommendations_list:
+        for idx, rec in enumerate(recommendations_list):
             try:
-                meal_rec = MealRecommendation(
-                    id=str(rec.get("recipeId", "")),
-                    name=rec.get("name", "Unknown Recipe"),
-                    imageUrl=rec.get("imageUrl"),  # Will use default if missing
-                    fsaHealthScore=int(rec.get("healthScore", 6))  # Default to 6 if missing
-                )
+                # Ensure we have required fields
+                recipe_id = str(rec.get("recipeId", f"recipe_{idx}"))
+                name = str(rec.get("name", f"Recipe {idx+1}"))
+                image_url = rec.get("imageUrl") or "https://via.placeholder.com/300"
+                health_score = int(rec.get("healthScore", 6))
+                
+                # Clamp health score to valid range
+                health_score = max(0, min(20, health_score))
+                
+                meal_rec = {
+                    "id": recipe_id,
+                    "name": name,
+                    "imageUrl": image_url,
+                    "fsaHealthScore": health_score
+                }
                 meal_recommendations.append(meal_rec)
             except Exception as e:
-                logger.warning(f"[{user_id}] Failed to parse recommendation: {str(e)}, data: {rec}")
+                logger.warning(f"[{user_id}] Failed to parse recommendation {idx}: {str(e)}, data: {rec}")
                 continue
         
         logger.info(f"[{user_id}] ✅ Returning {len(meal_recommendations)} pre-generated recommendations")
         
-        return RecommendationsResponse(
-            status="success",
-            showTransparencyFeatures=True,
-            recommendations=meal_recommendations
-        )
+        return {
+            "status": "success",
+            "showTransparencyFeatures": True,
+            "recommendations": meal_recommendations
+        }
         
     except Exception as e:
-        logger.error(f"[{user_id}] ❌ Failed to parse recommendations: {str(e)}", exc_info=True)
-        return RecommendationsResponse(
-            status="error",
-            showTransparencyFeatures=True,
-            recommendations=[]
-        )
+        logger.error(f"[{user_id}] ❌ Unexpected error in get_recommendations: {str(e)}", exc_info=True)
+        return {
+            "status": "error",
+            "showTransparencyFeatures": True,
+            "recommendations": []
+        }
 
 @router.get("/{id}", response_model=MealRecommendationDetail)
 async def get_recommendation_detail(id: str):
