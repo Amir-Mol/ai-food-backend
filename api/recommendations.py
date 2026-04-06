@@ -19,10 +19,10 @@ router = APIRouter(
 
 
 class MealRecommendation(BaseModel):
-    id: str
+    recipeId: str  # Fixed: was "id", frontend expects "recipeId"
     name: str
     imageUrl: Optional[str] = "https://via.placeholder.com/300"  # Default image URL
-    fsaHealthScore: int = Field(default=6, ge=0, le=20)  # Relaxed validation (0-20) to accept database values
+    healthScore: int = Field(default=6, ge=0, le=20)  # Fixed: was "fsaHealthScore", frontend expects "healthScore"
 
 class NutritionalInfo(BaseModel):
     """Detailed nutritional information for a meal."""
@@ -115,10 +115,10 @@ async def get_recommendations(
                 health_score = max(0, min(20, health_score))
                 
                 meal_rec = {
-                    "id": recipe_id,
+                    "recipeId": recipe_id,  # Fixed: was "id", frontend expects "recipeId"
                     "name": name,
                     "imageUrl": image_url,
-                    "fsaHealthScore": health_score
+                    "healthScore": health_score  # Fixed: was "fsaHealthScore", frontend expects "healthScore"
                 }
                 meal_recommendations.append(meal_rec)
             except Exception as e:
