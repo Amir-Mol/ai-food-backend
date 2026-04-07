@@ -318,6 +318,21 @@ async def submit_feedback(
         f"(is_fifth_feedback={is_fifth_feedback})"
     )
     
+    # PHASE D FIX: Set rate limiting AFTER 5th feedback (not during generation)
+    # This ensures users can immediately tap "Find a Meal" after onboarding,
+    # but must wait 1 hour before requesting the next batch
+    if is_fifth_feedback:
+        try:
+            next_allowed = datetime.now(timezone.utc) + timedelta(hours=1)
+            await db.user.update(
+                where={"id": user_id},
+                data={"nextAllowedGenerationAt": next_allowed}
+            )
+            logger.info(f"[{user_id}] ✅ 5th feedback reached - rate limit set. Next generation allowed at {next_allowed}")
+        except Exception as e:
+            logger.error(f"[{user_id}] Failed to set rate limit after 5th feedback: {str(e)}")
+            # Don't fail the user request - just log the error
+    
     # Refetch user to include any updated nextAllowedGenerationAt
     try:
         updated_user = await db.user.find_unique(where={"id": user_id})

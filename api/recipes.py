@@ -340,9 +340,6 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
         logger.error(f"[{user_id}] Batch save error: {str(e)}")
         # Continue - don't fail the user request if we can't save records
     
-    # Set timer for next generation (1 hour from now)
-    next_allowed = datetime.now(timezone.utc) + timedelta(minutes=2)
-    
     # --- PHASE A STEP 2: Track cycle progress ---
     # Calculate new totals for cycle tracking
     num_recommendations_generated = len(enriched_recommendations)
@@ -358,18 +355,17 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
         f"experiment_complete={is_experiment_complete}"
     )
     
-    # Update user record with timer and cycle tracking
+    # Update user record with cycle tracking (NO rate limiting here - set it after 5th feedback instead)
     try:
         await db.user.update(
             where={"id": user_id},
             data={
-                "nextAllowedGenerationAt": next_allowed,
                 "totalRecommendationsGenerated": new_total,
                 "currentCycleNumber": new_cycle_number,
                 "isExperimentComplete": is_experiment_complete
             }
         )
-        logger.debug(f"[{user_id}] Timer set: next generation allowed at {next_allowed}")
+        logger.debug(f"[{user_id}] Cycle tracking updated: total {new_total}/100, cycle {new_cycle_number}/20")
         logger.info(f"[{user_id}] Cycle tracking updated: {new_total}/100 recommendations, cycle {new_cycle_number}/20")
     except Exception as e:
         logger.error(f"[{user_id}] Failed to update user with cycle tracking: {str(e)}")
@@ -380,5 +376,5 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
     
     return FinalRecommendationsResponse(
         recommendations=enriched_recommendations,
-        nextAllowedGenerationAt=next_allowed
+        nextAllowedGenerationAt=None
     )
