@@ -351,8 +351,8 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
             # Continue - don't fail if we can't save training records
         
         # Step 6: Save to database
-        # --- PHASE A: Timer gate for rate limiting (2 minutes for testing, 1 hour in production) ---
-        next_allowed = datetime.utcnow() + timedelta(minutes=2)  # Change to timedelta(hours=1) for production
+        # Do NOT set nextAllowedGenerationAt here - it's set AFTER 5th feedback in api/recommendations.py
+        # This ensures first cycle shows "Find a Meal" button, not a timer
         recommendations_json = json.dumps(enriched_recommendations)
         
         # --- PHASE A STEP 2: Track cycle progress ---
@@ -376,17 +376,17 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
                 data={
                     "recommendations": recommendations_json,  # Store as JSON
                     "recommendationsReadyAt": datetime.utcnow(),
-                    "nextAllowedGenerationAt": next_allowed,
                     "recommendationGenerationStatus": "ready",
                     "totalRecommendationsGenerated": new_total,
                     "currentCycleNumber": new_cycle_number,
                     "isExperimentComplete": is_experiment_complete
+                    # NOTE: nextAllowedGenerationAt NOT set here - set after 5th feedback instead
                 }
             )
             elapsed = time.time() - start_time
             logger.info(
                 f"[{user_id}] Success: Generated {len(recommendations)} recommendations "
-                f"in {elapsed:.2f}s. Cycle {new_cycle_number}/20, Total {new_total}/100. Next allowed: {next_allowed}"
+                f"in {elapsed:.2f}s. Cycle {new_cycle_number}/20, Total {new_total}/100. Rate limit will be set after 5th feedback."
             )
             return True
             
