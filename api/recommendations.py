@@ -309,6 +309,15 @@ async def submit_feedback(
 
     logger.info(f"[{user_id}] Feedback submitted successfully")
     
+    # PHASE C Step 10: Count feedbacks to help frontend detect 5th feedback
+    # This allows frontend to auto-trigger next generation after 5th feedback
+    feedbacks_count = feedbacks_since_summary  # Already counted above
+    is_fifth_feedback = feedbacks_count >= 5
+    logger.debug(
+        f"[{user_id}] Feedback count check: {feedbacks_count} feedbacks "
+        f"(is_fifth_feedback={is_fifth_feedback})"
+    )
+    
     # Refetch user to include any updated nextAllowedGenerationAt
     try:
         updated_user = await db.user.find_unique(where={"id": user_id})
@@ -318,7 +327,23 @@ async def submit_feedback(
         }
         if updated_user and updated_user.nextAllowedGenerationAt:
             response["nextAllowedGenerationAt"] = updated_user.nextAllowedGenerationAt.isoformat()
+        
+        # PHASE C Step 10: Add feedback counting info for frontend auto-trigger
+        # feedbackCount: which feedback this is in the current cycle (1/5, 2/5, etc.)
+        # isFifthFeedback: boolean flag so frontend can detect when to auto-trigger
+        response["feedbackCount"] = feedbacks_count
+        response["isFifthFeedback"] = is_fifth_feedback
+        
+        if is_fifth_feedback:
+            logger.info(f"[{user_id}] ✅ 5th feedback reached - frontend should auto-trigger")
+        
         return response
     except Exception as e:
         logger.warning(f"[{user_id}] Failed to refetch user for response: {str(e)}")
-        return {"status": "success", "message": "Feedback received successfully."}
+        # Return minimal response - don't break existing frontend code
+        return {
+            "status": "success",
+            "message": "Feedback received successfully.",
+            "feedbackCount": feedbacks_count,
+            "isFifthFeedback": is_fifth_feedback
+        }
