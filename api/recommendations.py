@@ -243,13 +243,29 @@ async def submit_feedback(
     try:
         last_summary_time = current_user.feedbackSummaryLastUpdatedAt or datetime(1970, 1, 1)
         
-        feedbacks_since_summary = await db.trainingrecord.count(
+        # Fetch ALL records since last summary (fetch all, then filter in Python)
+        all_records = await db.trainingrecord.find_many(
             where={
                 "userId": current_user.id,
-                "createdAt": {"gte": last_summary_time},
-                "liked": {"not": None}  # Only count records with actual feedback
-            }
+                "createdAt": {"gte": last_summary_time}
+            },
+            order={"createdAt": "asc"}
         )
+        
+        # Filter to only those with actual feedback (liked is not None)
+        feedbacks_with_feedback = [rec for rec in all_records if rec.liked is not None]
+        feedbacks_since_summary = len(feedbacks_with_feedback)
+        
+        logger.info(
+            f"[{user_id}] Feedback count analysis: {feedbacks_since_summary} with liked!=None "
+            f"out of {len(all_records)} total records created since {last_summary_time}"
+        )
+        
+        # Log first few for debugging
+        if feedbacks_with_feedback:
+            logger.debug(f"[{user_id}] Recent feedbacks (with liked value):")
+            for i, fb in enumerate(feedbacks_with_feedback[-3:]):
+                logger.debug(f"  [{i}] rec#{fb.recommendationId}, liked={fb.liked}, created={fb.createdAt}")
         
         logger.debug(
             f"[{user_id}] Feedback count since last summary: {feedbacks_since_summary} "
@@ -262,21 +278,10 @@ async def submit_feedback(
             
             from tasks.recommendation_generator import trigger_feedback_summarization
             
-            # Get the 5 recent feedbacks for summarization
-            try:
-                recent_feedbacks = await db.trainingrecord.find_many(
-                    where={
-                        "userId": current_user.id,
-                        "createdAt": {"gte": last_summary_time},
-                        "liked": {"not": None}
-                    },
-                    order={"createdAt": "desc"},
-                    take=5
-                )
-                logger.debug(f"[{user_id}] Fetched {len(recent_feedbacks)} recent feedbacks for summarization")
-            except Exception as e:
-                logger.error(f"[{user_id}] Failed to fetch recent feedbacks: {str(e)}")
-                recent_feedbacks = []
+            # Use the already-fetched feedbacks_with_feedback list (sorted by creation time)
+            # Take the 5 most recent ones
+            recent_feedbacks = feedbacks_with_feedback[-5:] if len(feedbacks_with_feedback) >= 5 else feedbacks_with_feedback
+            logger.info(f"[{user_id}] Using {len(recent_feedbacks)} recent feedbacks for summarization")
             
             # PHASE 4: Validate feedback list before summarization
             if recent_feedbacks:
