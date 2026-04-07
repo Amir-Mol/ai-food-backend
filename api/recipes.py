@@ -14,7 +14,7 @@ from prisma.models import User
 from recommender.engine import generate_consideration_set
 from database import db
 
-from config import PROCESSED_RECIPE_FILE, RECIPE_EMBEDDINGS_FILE
+from config import PROCESSED_RECIPE_FILE, RECIPE_EMBEDDINGS_FILE, RATE_LIMIT_MINUTES
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class FinalRankedRecommendation(BaseModel):
 
 class FinalRecommendationsResponse(BaseModel):
     recommendations: List[FinalRankedRecommendation]
-    nextAllowedGenerationAt: Optional[datetime] = None
+    waitingMinutes: Optional[int] = None  # Minutes to wait before next generation (rate limit)
 
 # --- Pydantic Models for AI Interaction ---
 
@@ -376,5 +376,5 @@ async def generate_recommendations(current_user: Annotated[User, Depends(get_cur
     
     return FinalRecommendationsResponse(
         recommendations=enriched_recommendations,
-        nextAllowedGenerationAt=None
+        waitingMinutes=None  # No rate limit set yet - set after 5th feedback
     )

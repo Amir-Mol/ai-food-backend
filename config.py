@@ -9,6 +9,9 @@ PROCESSED_DATA_DIR = DATA_DIR / "processed"
 # --- Preprocessing Settings ---
 CONSIDERATION_SET_SIZE = 100
 
+# --- Rate Limiting Settings ---
+RATE_LIMIT_MINUTES = 2  # Testing value; set to 60 for production (1 hour)
+
 # --- File Paths ---
 RAW_RECIPE_FILE = RAW_DATA_DIR / "Recipe_fooddotcom.xlsx"
 PROCESSED_RECIPE_FILE = PROCESSED_DATA_DIR / "processed_recipes.parquet"

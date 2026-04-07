@@ -304,8 +304,8 @@ class FrontendFlowSimulator:
                 # Validate response
                 try:
                     resp_data = response.json()
-                    if 'nextAllowedGenerationAt' in resp_data:
-                        log_info(f"  Next generation allowed at: {resp_data['nextAllowedGenerationAt']}")
+                    if 'waitingMinutes' in resp_data and resp_data['waitingMinutes'] is not None:
+                        log_info(f"  Rate limit set: {resp_data['waitingMinutes']} minutes remaining")
                 except:
                     pass
                 

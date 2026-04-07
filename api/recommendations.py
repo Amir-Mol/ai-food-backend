@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from typing import Optional, Annotated, List, Dict
+from typing import Optional, Annotated, List, Dict, Any
 import asyncio
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from api.auth import get_current_active_user
 from prisma.models import User
 from database import db
+from config import RATE_LIMIT_MINUTES
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +173,7 @@ async def submit_feedback(
     recommendation_id: str,
     feedback: FeedbackCreate,
     current_user: Annotated[User, Depends(get_current_active_user)],
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     """
     Submits feedback for a recommendation and triggers summarization if needed.
     
@@ -320,15 +321,15 @@ async def submit_feedback(
     
     # PHASE D FIX: Set rate limiting AFTER 5th feedback (not during generation)
     # This ensures users can immediately tap "Find a Meal" after onboarding,
-    # but must wait 1 hour before requesting the next batch
+    # but must wait RATE_LIMIT_MINUTES before requesting the next batch
     if is_fifth_feedback:
         try:
-            next_allowed = datetime.now(timezone.utc) + timedelta(hours=1)
+            next_allowed = datetime.now(timezone.utc) + timedelta(minutes=RATE_LIMIT_MINUTES)
             await db.user.update(
                 where={"id": user_id},
                 data={"nextAllowedGenerationAt": next_allowed}
             )
-            logger.info(f"[{user_id}] ✅ 5th feedback reached - rate limit set. Next generation allowed at {next_allowed}")
+            logger.info(f"[{user_id}] ✅ 5th feedback reached - rate limit set for {RATE_LIMIT_MINUTES} minutes. Next generation allowed at {next_allowed}")
         except Exception as e:
             logger.error(f"[{user_id}] Failed to set rate limit after 5th feedback: {str(e)}")
             # Don't fail the user request - just log the error
@@ -340,8 +341,13 @@ async def submit_feedback(
             "status": "success",
             "message": "Feedback received successfully."
         }
+        
+        # Calculate waitingMinutes if rate limited
         if updated_user and updated_user.nextAllowedGenerationAt:
-            response["nextAllowedGenerationAt"] = updated_user.nextAllowedGenerationAt.isoformat()
+            remaining_seconds = (updated_user.nextAllowedGenerationAt - datetime.now(timezone.utc)).total_seconds()
+            if remaining_seconds > 0:
+                waiting_minutes = int(remaining_seconds // 60)
+                response["waitingMinutes"] = waiting_minutes
         
         # PHASE C Step 10: Add feedback counting info for frontend auto-trigger
         # feedbackCount: which feedback this is in the current cycle (1/5, 2/5, etc.)
