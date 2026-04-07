@@ -240,6 +240,7 @@ async def submit_feedback(
 
     # --- Version2: PHASE 4 - Check if feedback summarization should trigger ---
     # Count feedbacks since last summarization with robust error handling
+    # CRITICAL FIX: Count SUBMISSIONS not UNIQUE recommendations
     try:
         last_summary_time = current_user.feedbackSummaryLastUpdatedAt or datetime(1970, 1, 1)
         
@@ -252,23 +253,34 @@ async def submit_feedback(
             order={"createdAt": "asc"}
         )
         
-        # Filter to only those with actual feedback (liked is not None)
+        # Count unique recommendations with feedback (for logging)
         feedbacks_with_feedback = [rec for rec in all_records if rec.liked is not None]
-        feedbacks_since_summary = len(feedbacks_with_feedback)
+        unique_recommendations_with_feedback = len(feedbacks_with_feedback)
         
         logger.info(
-            f"[{user_id}] Feedback count analysis: {feedbacks_since_summary} with liked!=None "
-            f"out of {len(all_records)} total records created since {last_summary_time}"
+            f"[{user_id}] Feedback count analysis: {unique_recommendations_with_feedback} unique recommendations "
+            f"with feedback out of {len(all_records)} total records created since {last_summary_time}"
         )
         
-        # Log first few for debugging
-        if feedbacks_with_feedback:
-            logger.debug(f"[{user_id}] Recent feedbacks (with liked value):")
-            for i, fb in enumerate(feedbacks_with_feedback[-3:]):
-                logger.debug(f"  [{i}] rec#{fb.recommendationId}, liked={fb.liked}, created={fb.createdAt}")
+        # CRITICAL: We need to count FEEDBACK SUBMISSIONS, not unique recommendations
+        # Since user can submit feedback twice for same recipe, we count them differently:
+        # Method: Get current feedback submission count from user profile
+        current_submission_count = current_user.feedbackSubmissionCount or 0
+        feedbacks_since_summary = current_submission_count + 1  # Include this current submission
+        
+        # Update the submission counter
+        try:
+            await db.user.update(
+                where={"id": user_id},
+                data={"feedbackSubmissionCount": feedbacks_since_summary}
+            )
+            logger.info(f"[{user_id}] Feedback submission count: {feedbacks_since_summary}")
+        except Exception as e:
+            logger.warning(f"[{user_id}] Failed to update submission counter: {str(e)}")
+            # Continue - don't fail if we can't increment counter
         
         logger.debug(
-            f"[{user_id}] Feedback count since last summary: {feedbacks_since_summary} "
+            f"[{user_id}] Feedback count since last summary: {feedbacks_since_summary} submissions "
             f"(last summary: {last_summary_time})"
         )
         
@@ -332,11 +344,14 @@ async def submit_feedback(
             next_allowed = datetime.now(timezone.utc) + timedelta(minutes=RATE_LIMIT_MINUTES)
             await db.user.update(
                 where={"id": user_id},
-                data={"nextAllowedGenerationAt": next_allowed}
+                data={
+                    "nextAllowedGenerationAt": next_allowed,
+                    "recommendations": None  # CRITICAL: Clear old recommendations so new ones must be generated
+                }
             )
-            logger.info(f"[{user_id}] ✅ 5th feedback reached - rate limit set for {RATE_LIMIT_MINUTES} minutes. Next generation allowed at {next_allowed}")
+            logger.info(f"[{user_id}] ✅ 5th feedback reached - cleared old recommendations cache and set rate limit for {RATE_LIMIT_MINUTES} minutes. Next generation allowed at {next_allowed}")
         except Exception as e:
-            logger.error(f"[{user_id}] Failed to set rate limit after 5th feedback: {str(e)}")
+            logger.error(f"[{user_id}] Failed to update after 5th feedback: {str(e)}")
             # Don't fail the user request - just log the error
     
     # Refetch user to include any updated nextAllowedGenerationAt

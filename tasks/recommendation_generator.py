@@ -501,10 +501,11 @@ async def trigger_feedback_summarization(user_id: str, new_feedbacks: List[Dict[
                 data={
                     "feedbackSummaryForEmbedding": summary_result["embedding_summary"],
                     "feedbackSummaryForLLM": summary_result["llm_summary"],
-                    "feedbackSummaryLastUpdatedAt": datetime.utcnow()
+                    "feedbackSummaryLastUpdatedAt": datetime.utcnow(),
+                    "feedbackSubmissionCount": 0  # CRITICAL FIX: Reset submission counter for next cycle
                 }
             )
-            logger.debug(f"[{user_id}] Summaries saved to database")
+            logger.debug(f"[{user_id}] Summaries saved to database and submission counter reset")
         except Exception as e:
             logger.error(f"[{user_id}] Failed to save summaries: {str(e)}")
             await db.user.update(

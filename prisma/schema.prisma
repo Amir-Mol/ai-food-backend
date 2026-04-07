@@ -37,6 +37,7 @@ model User {
   feedbackSummaryForEmbedding    String?    @db.Text    // 1-2 sentence summary for Stage 1 semantic search
   feedbackSummaryForLLM          String?    @db.Text    // 3-5 sentence summary for Stage 2 LLM reasoning
   feedbackSummaryLastUpdatedAt   DateTime?              // Track when summary was last created (for counting feedbacks)
+  feedbackSubmissionCount        Int        @default(0) // CRITICAL FIX: Count feedback submissions to trigger at 5th submission
 
   // Version2: Recommendation generation status tracking
   recommendationGenerationStatus String     @default("idle")  // "idle" | "summarizing" | "generating" | "ready"
