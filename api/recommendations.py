@@ -346,10 +346,13 @@ async def submit_feedback(
                 where={"id": user_id},
                 data={
                     "nextAllowedGenerationAt": next_allowed,
-                    "recommendations": None  # CRITICAL: Clear old recommendations so new ones must be generated
+                    # NOTE: do not set recommendations=None here — prisma Json? field
+                    # rejects Python None. The new batch overwrites it when generation
+                    # completes, and the status field ('summarizing'/'generating')
+                    # prevents stale serving in the meantime.
                 }
             )
-            logger.info(f"[{user_id}] ✅ 5th feedback reached - cleared old recommendations cache and set rate limit for {RATE_LIMIT_MINUTES} minutes. Next generation allowed at {next_allowed}")
+            logger.info(f"[{user_id}] ✅ 5th feedback reached - set rate limit for {RATE_LIMIT_MINUTES} minutes. Next generation allowed at {next_allowed}")
         except Exception as e:
             logger.error(f"[{user_id}] Failed to update after 5th feedback: {str(e)}")
             # Don't fail the user request - just log the error

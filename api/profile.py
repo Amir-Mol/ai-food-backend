@@ -7,6 +7,7 @@ import asyncio
 from api.auth import get_current_active_user
 from prisma.models import User
 from database import db
+from tasks.recommendation_generator import trigger_recommendation_generation_on_onboarding
 
 router = APIRouter(
     prefix="/user",
@@ -129,8 +130,6 @@ async def complete_onboarding(current_user: Annotated[User, Depends(get_current_
     - User manually goes to HomeScreen after tutorial
     - HomeScreen starts polling to wait for recommendations to be ready
     """
-    from tasks.recommendation_generator import trigger_recommendation_generation_on_onboarding
-    
     # Mark onboarding as complete
     await db.user.update(
         where={"id": current_user.id},
