@@ -11,7 +11,7 @@ PHASE 4 ENHANCEMENTS:
 """
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 import logging
 import json
@@ -375,7 +375,7 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
                 where={"id": user_id},
                 data={
                     "recommendations": recommendations_json,  # Store as JSON
-                    "recommendationsReadyAt": datetime.utcnow(),
+                    "recommendationsReadyAt": datetime.now(timezone.utc),
                     "recommendationGenerationStatus": "ready",
                     "totalRecommendationsGenerated": new_total,
                     "currentCycleNumber": new_cycle_number,
@@ -453,6 +453,19 @@ async def trigger_feedback_summarization(user_id: str, new_feedbacks: List[Dict[
             )
             return False
         
+        # Reset submission counter NOW — before any potentially-failing work.
+        # If summarization fails below, the counter is already 0 so the next
+        # batch of 5 feedbacks (not the very next single feedback) will re-trigger.
+        try:
+            await db.user.update(
+                where={"id": user_id},
+                data={"feedbackSubmissionCount": 0}
+            )
+            logger.debug(f"[{user_id}] feedbackSubmissionCount reset to 0 (pre-summarization)")
+        except Exception as e:
+            logger.warning(f"[{user_id}] Failed to reset submission counter early: {str(e)}")
+            # Continue — don't abort summarization just because counter reset failed
+        
         # Update status to "summarizing"
         await db.user.update(
             where={"id": user_id},
@@ -501,11 +514,11 @@ async def trigger_feedback_summarization(user_id: str, new_feedbacks: List[Dict[
                 data={
                     "feedbackSummaryForEmbedding": summary_result["embedding_summary"],
                     "feedbackSummaryForLLM": summary_result["llm_summary"],
-                    "feedbackSummaryLastUpdatedAt": datetime.utcnow(),
-                    "feedbackSubmissionCount": 0  # CRITICAL FIX: Reset submission counter for next cycle
+                    "feedbackSummaryLastUpdatedAt": datetime.now(timezone.utc),
+                    # feedbackSubmissionCount already reset to 0 at task start
                 }
             )
-            logger.debug(f"[{user_id}] Summaries saved to database and submission counter reset")
+            logger.debug(f"[{user_id}] Summaries saved to database")
         except Exception as e:
             logger.error(f"[{user_id}] Failed to save summaries: {str(e)}")
             await db.user.update(

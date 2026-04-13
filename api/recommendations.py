@@ -362,12 +362,14 @@ async def submit_feedback(
             "message": "Feedback received successfully."
         }
         
-        # Calculate waitingMinutes if rate limited
+        # Calculate waitingMinutes and absolute deadline if rate limited
         if updated_user and updated_user.nextAllowedGenerationAt:
             remaining_seconds = (updated_user.nextAllowedGenerationAt - datetime.now(timezone.utc)).total_seconds()
             if remaining_seconds > 0:
                 waiting_minutes = int(remaining_seconds // 60)
                 response["waitingMinutes"] = waiting_minutes
+                # Include absolute deadline so frontend can avoid stale timer on app re-open
+                response["nextAllowedGenerationAt"] = updated_user.nextAllowedGenerationAt.isoformat()
         
         # PHASE C Step 10: Add feedback counting info for frontend auto-trigger
         # feedbackCount: which feedback this is in the current cycle (1/5, 2/5, etc.)

@@ -41,6 +41,9 @@ class UserProfileResponse(BaseModel):
     favoriteCuisines: Optional[List[str]] = None
     otherCuisine: Optional[str] = None
     total_feedbacks_submitted: int = 0
+    isExperimentComplete: bool = False
+    totalRecommendationsGenerated: int = 0
+    currentCycleNumber: int = 0
 
 class UserProfileUpdate(BaseModel):
     name: Optional[str] = None
@@ -86,6 +89,9 @@ async def get_user_profile(current_user: Annotated[User, Depends(get_current_act
         favoriteCuisines=current_user.favoriteCuisines,
         otherCuisine=current_user.otherCuisine,
         total_feedbacks_submitted=total_feedbacks,
+        isExperimentComplete=current_user.isExperimentComplete or False,
+        totalRecommendationsGenerated=current_user.totalRecommendationsGenerated or 0,
+        currentCycleNumber=current_user.currentCycleNumber or 0,
     )
 
 @router.patch("/profile", status_code=status.HTTP_200_OK)
@@ -94,9 +100,6 @@ async def update_user_profile(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> dict:
     update_dict = profile_data.model_dump(exclude_unset=True)
-
-    if "likedIngredients" in update_dict or "dislikedIngredients" in update_dict:
-        update_dict["onboardingCompleted"] = True
 
     if "dietaryProfile" in update_dict and update_dict["dietaryProfile"] is not None:
         update_dict["dietaryProfile"] = json.dumps(update_dict["dietaryProfile"])
@@ -112,21 +115,27 @@ async def update_user_profile(
 @router.post("/complete-onboarding", status_code=status.HTTP_200_OK)
 async def complete_onboarding(current_user: Annotated[User, Depends(get_current_active_user)]):
     """
-    Called by frontend after final onboarding screen.
-    Triggers auto-generation of initial recommendations (asynchronously).
+    Called by frontend after final onboarding screen (after consent checkbox).
+    Marks onboarding as complete and triggers auto-generation of initial recommendations (asynchronously).
     
     Response:
     {
         "status": "success",
-        "message": "Recommendations generation started. Check /recommendation-status for progress."
+        "message": "Onboarding completed. Recommendations generation started."
     }
     
-    Frontend should:
-    1. Show loading spinner
-    2. Poll GET /api/recommendation-status every 3 seconds
-    3. Auto-navigate to recommendations screen when status == "ready"
+    Frontend behavior:
+    - Navigates to TutorialScreen (no polling needed)
+    - User manually goes to HomeScreen after tutorial
+    - HomeScreen starts polling to wait for recommendations to be ready
     """
     from tasks.recommendation_generator import trigger_recommendation_generation_on_onboarding
+    
+    # Mark onboarding as complete
+    await db.user.update(
+        where={"id": current_user.id},
+        data={"onboardingCompleted": True}
+    )
     
     # Trigger async generation (fire-and-forget)
     asyncio.create_task(
@@ -135,5 +144,5 @@ async def complete_onboarding(current_user: Annotated[User, Depends(get_current_
     
     return {
         "status": "success",
-        "message": "Recommendations generation started. Check /api/recommendation-status for progress."
+        "message": "Onboarding completed. Recommendations generation started."
     }
