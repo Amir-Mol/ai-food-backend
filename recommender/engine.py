@@ -149,7 +149,14 @@ def _calculate_score(
     # Dietary Doctrine Check: Safely get list of dietary restrictions.
     dietary_restrictions = dietary_profile.get('dietaryRestrictions') or {}
     user_diet = set(dietary_restrictions.get('selected', []))
-    recipe_tags = set(recipe['tags'])
+    # Tags are stored as strings in parquet — parse to a list before building a set.
+    raw_tags = recipe['tags']
+    if isinstance(raw_tags, str):
+        try:
+            raw_tags = ast.literal_eval(raw_tags)
+        except (ValueError, SyntaxError):
+            raw_tags = []
+    recipe_tags = set(raw_tags) if raw_tags is not None else set()
     if 'Vegan' in user_diet and 'Vegan' not in recipe_tags:
         return 0.0
     if 'Vegetarian' in user_diet and 'Vegetarian' not in recipe_tags:
