@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from api.auth import get_current_active_user
 from prisma.models import User
+from prisma import Json
 from database import db
 
 logger = logging.getLogger(__name__)
@@ -54,8 +55,8 @@ async def submit_survey(
     try:
         await db.surveyresponse.create(
             data={
-                "userId": user_id,
-                "answers": payload.answers,
+                "user": {"connect": {"id": user_id}},
+                "answers": Json(payload.answers),
                 "timeSpentSeconds": payload.timeSpentSeconds,
             }
         )
