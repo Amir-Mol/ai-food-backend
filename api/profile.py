@@ -45,6 +45,7 @@ class UserProfileResponse(BaseModel):
     isExperimentComplete: bool = False
     totalRecommendationsGenerated: int = 0
     currentCycleNumber: int = 0
+    group: str = "transparency"
 
 class UserProfileUpdate(BaseModel):
     name: Optional[str] = None
@@ -93,6 +94,7 @@ async def get_user_profile(current_user: Annotated[User, Depends(get_current_act
         isExperimentComplete=current_user.isExperimentComplete or False,
         totalRecommendationsGenerated=current_user.totalRecommendationsGenerated or 0,
         currentCycleNumber=current_user.currentCycleNumber or 0,
+        group=current_user.group or "transparency",
     )
 
 @router.patch("/profile", status_code=status.HTTP_200_OK)
