@@ -241,6 +241,7 @@ async def submit_feedback(
     # --- Version2: PHASE 4 - Check if feedback summarization should trigger ---
     # Count feedbacks since last summarization with robust error handling
     # CRITICAL FIX: Count SUBMISSIONS not UNIQUE recommendations
+    feedbacks_since_summary = 0  # Safe default if the try block below raises
     try:
         last_summary_time = current_user.feedbackSummaryLastUpdatedAt or datetime(1970, 1, 1)
         
@@ -303,7 +304,9 @@ async def submit_feedback(
                     feedback_dicts.append({
                         "recipe_name": fb.recommendationName,
                         "action": "liked" if fb.liked else "disliked",
-                        "rating": fb.intentToTryScore,
+                        "healthinessScore": fb.healthinessScore,
+                        "tastinessScore": fb.tastinessScore,
+                        "intentToTryScore": fb.intentToTryScore,
                         "notes": None
                     })
                 

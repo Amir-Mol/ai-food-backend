@@ -7,7 +7,7 @@ class DietaryItem(BaseModel):
     """Represents a dietary item with a list of selected options and an 'other' text field."""
 
     selected: List[str]
-    other: str
+    other: Optional[str] = None
 
 
 class DietaryProfileData(BaseModel):

@@ -9,6 +9,7 @@ bonus factors (likes, cuisines, ratings). Returns a ranked list of recipes
 forming a "consideration set" for the user.
 """
 
+import ast
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Optional
@@ -18,11 +19,17 @@ from sklearn.metrics.pairwise import cosine_similarity
 from config import CONSIDERATION_SET_SIZE
 
 # It is assumed that the model is loaded once when the application starts.
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+embedding_model = SentenceTransformer('thenlper/gte-small')
 
-def _create_user_document(user_profile: Dict[str, Any], feedback_summary: Optional[str] = None) -> str:
+def _create_user_document(
+    user_profile: Dict[str, Any],
+    feedback_summary: Optional[str] = None,
+    liked_recipe_names: Optional[List[str]] = None,
+    disliked_recipe_names: Optional[List[str]] = None
+) -> str:
     """Creates a single text string from a user's profile for embedding."""
     likes = ', '.join(user_profile.get('likedIngredients', []))
+    dislikes = ', '.join(user_profile.get('dislikedIngredients', []))
     cuisines = ', '.join(user_profile.get('favoriteCuisines', []))
     
     # Safely access nested dietary restrictions, handling missing keys or None values.
@@ -32,10 +39,21 @@ def _create_user_document(user_profile: Dict[str, Any], feedback_summary: Option
 
     document = (
         f"A user who likes {likes}. "
-        f"They enjoy {cuisines} cuisines. "
+        + (f"They dislike {dislikes}. " if dislikes else "")
+        + f"They enjoy {cuisines} cuisines. "
         f"Their dietary profile includes: {diet_info}. "
         f"They have an activity level of {user_profile.get('activityLevel', 'unknown')}."
     )
+    
+    # Add directly observed liked recipes for stronger embedding signal
+    if liked_recipe_names:
+        liked_str = ', '.join(liked_recipe_names[:20])  # cap to avoid runaway document length
+        document += f" They have previously liked: {liked_str}."
+    
+    # Add directly observed disliked recipes to push embedding away from those
+    if disliked_recipe_names:
+        disliked_str = ', '.join(disliked_recipe_names[:20])  # cap to avoid runaway document length
+        document += f" They have previously disliked: {disliked_str}."
     
     # Add feedback summary if available (evolved preferences)
     if feedback_summary:
@@ -89,8 +107,7 @@ def _calculate_score(
     user_profile: Dict[str, Any],
     recipe: pd.Series,
     user_embedding: np.ndarray,
-    recipe_embedding: np.ndarray,
-    per_meal_calorie_target: Optional[float]
+    recipe_embedding: np.ndarray
 ) -> float:
     
     """
@@ -100,12 +117,33 @@ def _calculate_score(
 
     # --- Hard Constraints ---
     # Safely access nested profile data, defaulting to empty structures if keys are missing or values are None.
-    food_allergies_profile = user_profile.get('foodAllergies') or {}
     dietary_profile = user_profile.get('dietaryProfile') or {}
+    food_allergies_profile = dietary_profile.get('foodAllergies') or {}
 
     # Allergy Check: Safely get list of allergies.
-    user_allergies = set(allergen.lower() for allergen in food_allergies_profile.get('selected', []))
-    if user_allergies and any(allergen in recipe['ingredients_title'] for allergen in user_allergies):
+    # Map high-level allergen categories to common ingredient substrings.
+    ALLERGEN_MAP = {
+        "shellfish": ["shrimp", "prawn", "crab", "lobster", "crayfish", "scallop", "clam", "oyster", "mussel", "squid", "octopus"],
+        "tree nuts": ["almond", "cashew", "walnut", "pecan", "pistachio", "hazelnut", "macadamia", "brazil nut", "pine nut"],
+        "peanuts": ["peanut", "groundnut"],
+        "dairy": ["milk", "cheese", "butter", "cream", "yogurt", "lactose", "whey", "casein"],
+        "gluten": ["wheat", "flour", "bread", "barley", "rye", "spelt"],
+        "eggs": ["egg", "eggs"],
+        "soy": ["soy", "tofu", "tempeh", "edamame", "miso"],
+        "fish": ["salmon", "tuna", "cod", "tilapia", "halibut", "anchovy", "sardine", "herring", "mackerel"],
+        "sesame": ["sesame", "tahini"],
+    }
+    user_allergies_raw = [a.lower() for a in food_allergies_profile.get('selected', [])]
+    # Build the full set of ingredient substrings to block
+    allergen_terms = set()
+    for raw in user_allergies_raw:
+        mapped = ALLERGEN_MAP.get(raw)
+        if mapped:
+            allergen_terms.update(mapped)
+        else:
+            allergen_terms.add(raw)  # fall back to exact term
+    allergy_ingredients = [str(ing).lower() for ing in (recipe['ingredients_title'] if recipe['ingredients_title'] is not None else [])]
+    if allergen_terms and any(term in ing for term in allergen_terms for ing in allergy_ingredients):
         return 0.0
 
     # Dietary Doctrine Check: Safely get list of dietary restrictions.
@@ -124,15 +162,17 @@ def _calculate_score(
     score = embedding_sim
 
     # Dislikes Penalty (uses 'ingredients_title')
+    # Use substring match within each ingredient string to catch plurals/partial names.
     user_dislikes = set(dislike.lower() for dislike in user_profile.get('dislikedIngredients', []))
-    if user_dislikes and any(dislike in recipe['ingredients_title'] for dislike in user_dislikes):
+    recipe_ingredients = [str(ing).lower() for ing in (recipe['ingredients_title'] if recipe['ingredients_title'] is not None else [])]
+    if user_dislikes and any(dislike in ing for dislike in user_dislikes for ing in recipe_ingredients):
         score *= 0.3 # Apply significant penalty
 
     # Custom Forbidden Ingredients Penalty (from the 'other' field) - now a soft constraint
     other_restrictions_str = dietary_restrictions.get('other')
     if other_restrictions_str:
         forbidden_ingredients = {item.strip().lower() for item in other_restrictions_str.split(',')}
-        if any(forbidden in recipe['ingredients_title'] for forbidden in forbidden_ingredients):
+        if any(forbidden in ing for forbidden in forbidden_ingredients for ing in recipe_ingredients):
             score *= 0.3 # Apply same penalty as regular dislikes
 
     # Health Goal Penalty: Safely get list of health conditions.
@@ -147,17 +187,6 @@ def _calculate_score(
     user_likes = set(like.lower() for like in user_profile.get('likedIngredients', []))
     if user_likes and any(like in recipe['ingredients_title'] for like in user_likes):
         score *= 1.2 # Apply small bonus
-
-    # Penalize recipes that are far outside the user's estimated calorie needs for a meal.
-    if per_meal_calorie_target:
-        recipe_calories = recipe['calories_per_serving [cal]']
-        # Define an acceptable range (e.g., +/- 50% of the target)
-        lower_bound = per_meal_calorie_target * 0.5
-        upper_bound = per_meal_calorie_target * 1.5
-        
-        # Apply a penalty if the recipe's calories fall outside this reasonable range
-        if not (lower_bound <= recipe_calories <= upper_bound):
-            score *= 0.7 # Apply a 30% penalty
                 
     return score
 
@@ -167,7 +196,7 @@ def _format_output(top_recipes_df: pd.DataFrame) -> List[Dict[str, Any]]:
     """
     output_keys = {
         'recipeId': 'recipe_id', 
-        'recipe_name': 'title',
+        'name': 'title',
         'recipeUrl': 'recipe_url',
         'imageUrl': 'image_url',
         'ingredients': 'ingredients_title',
@@ -207,7 +236,13 @@ def _format_output(top_recipes_df: pd.DataFrame) -> List[Dict[str, Any]]:
 
         tags = recipe_dict.get('tags')
         if tags is not None:
-            recipe_dict['tags'] = list(tags)
+            if isinstance(tags, str):
+                try:
+                    recipe_dict['tags'] = ast.literal_eval(tags)
+                except (ValueError, SyntaxError):
+                    recipe_dict['tags'] = [tags]
+            else:
+                recipe_dict['tags'] = list(tags)
 
         output_list.append(recipe_dict)
         
@@ -218,7 +253,10 @@ def generate_consideration_set(
     recipes_df: pd.DataFrame,
     recipe_embeddings: np.ndarray,
     consideration_set_size: int = CONSIDERATION_SET_SIZE,
-    feedback_summary: Optional[str] = None
+    feedback_summary: Optional[str] = None,
+    seen_recipe_ids: Optional[set] = None,
+    liked_recipe_names: Optional[List[str]] = None,
+    disliked_recipe_names: Optional[List[str]] = None
 ) -> List[Dict[str, Any]]:
     """
     The main function for the Stage 1 Filtering Engine.
@@ -230,20 +268,29 @@ def generate_consideration_set(
         recipe_embeddings: Pre-computed recipe embeddings
         consideration_set_size: Number of recipes to return
         feedback_summary: Optional summarized feedback for preference evolution
+        seen_recipe_ids: Set of recipe ID strings already seen by the user (excluded before scoring)
+        liked_recipe_names: List of recipe names the user has liked (enriches embedding document)
+        disliked_recipe_names: List of recipe names the user has disliked (negative signal in embedding)
     """
     # Generate User Embedding in real-time
-    user_document = _create_user_document(user_profile, feedback_summary)
+    user_document = _create_user_document(user_profile, feedback_summary, liked_recipe_names, disliked_recipe_names)
     user_embedding = embedding_model.encode(user_document).reshape(1, -1)
-
-    # Estimate the user's calorie target 
-    per_meal_calorie_target = _estimate_per_meal_calorie_target(user_profile)
-    if per_meal_calorie_target:
-        print(f"Estimated per-meal calorie target for user: {per_meal_calorie_target:.0f} kcal")
 
     print("Generating consideration set with embeddings...")
 
     # Create a new DataFrame with a simple, sequential integer index to ensure safe embedding lookups
     recipes_to_score_df = recipes_df.reset_index()
+
+    # Filter out already-seen recipes BEFORE scoring so the top-N result is always fresh
+    if seen_recipe_ids:
+        original_count = len(recipes_to_score_df)
+        recipes_to_score_df = recipes_to_score_df[
+            ~recipes_to_score_df['recipe_id'].astype(str).isin(seen_recipe_ids)
+        ].copy()
+        # Re-create a clean integer index so embedding lookups remain correct
+        recipe_embeddings = recipe_embeddings[recipes_to_score_df.index.to_numpy()]
+        recipes_to_score_df = recipes_to_score_df.reset_index(drop=True)
+        print(f"Excluded {original_count - len(recipes_to_score_df)} already-seen recipes before scoring.")
 
     # Calculate a score for every recipe for the given user by iterating safely
     scores = []
@@ -256,8 +303,7 @@ def generate_consideration_set(
             user_profile,
             recipe,
             user_embedding,
-            recipe_embedding, # Pass the single embedding
-            per_meal_calorie_target
+            recipe_embedding
         )
         scores.append(score)
     recipes_to_score_df['score'] = scores

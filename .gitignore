@@ -14,3 +14,5 @@ data/processed/*_old.*
 data/processed/*_debug.*
 data/raw/*.csv
 
+
+test/

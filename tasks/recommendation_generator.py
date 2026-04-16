@@ -23,7 +23,7 @@ from database import db
 from recommender.engine import generate_consideration_set
 from ai_service_client import get_recipe_suggestion
 from models.ai_profile import AIUserProfile
-from config import CONSIDERATION_SET_SIZE, PROCESSED_RECIPE_FILE, RECIPE_EMBEDDINGS_FILE
+from config import CONSIDERATION_SET_SIZE, LLM_CANDIDATE_SIZE, PROCESSED_RECIPE_FILE, RECIPE_EMBEDDINGS_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +139,14 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
                 f"{user.totalRecommendationsGenerated}/100 recommendations, "
                 f"cycle {user.currentCycleNumber}/20. Skipping generation."
             )
+            # Reset status so frontend stops polling (was set to "summarizing" by trigger_feedback_summarization)
+            try:
+                await db.user.update(
+                    where={"id": user_id},
+                    data={"recommendationGenerationStatus": "idle"}
+                )
+            except Exception as e:
+                logger.warning(f"[{user_id}] Could not reset status after experiment-complete skip: {str(e)}")
             return False
         
         logger.info(f"[{user_id}] Starting recommendation generation")
@@ -176,13 +184,40 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
             "dietaryProfile": user.dietaryProfile or {},
         }
         
+        # Step 2: Fetch seen recipe IDs (used by Stage 1 to pre-filter before scoring)
+        try:
+            feedback_entries = await db.trainingrecord.find_many(where={'userId': user_id})
+            seen_recipe_ids = {f.recommendationId for f in feedback_entries}
+            logger.debug(f"[{user_id}] Found {len(seen_recipe_ids)} previously seen recipes to exclude")
+        except Exception as e:
+            logger.error(f"[{user_id}] Failed to fetch seen recipes: {str(e)}")
+            await db.user.update(
+                where={"id": user_id},
+                data={"recommendationGenerationStatus": "idle"}
+            )
+            return False
+
+        # Extract liked and disliked recipe names from feedback history for richer embedding document
+        liked_recipe_names = [
+            f.recommendationName for f in feedback_entries
+            if f.liked is True and f.recommendationName
+        ]
+        disliked_recipe_names = [
+            f.recommendationName for f in feedback_entries
+            if f.liked is False and f.recommendationName
+        ]
+        logger.debug(f"[{user_id}] Found {len(liked_recipe_names)} liked and {len(disliked_recipe_names)} disliked recipes for embedding enrichment")
+
         try:
             consideration_set = generate_consideration_set(
                 user_profile=user_profile,
                 recipes_df=RECIPES_DF,
                 recipe_embeddings=RECIPE_EMBEDDINGS,
                 consideration_set_size=CONSIDERATION_SET_SIZE,
-                feedback_summary=feedback_summary  # May be None for new users
+                feedback_summary=feedback_summary,  # May be None for new users
+                seen_recipe_ids=seen_recipe_ids,     # Excluded before scoring
+                liked_recipe_names=liked_recipe_names or None,   # None if empty list
+                disliked_recipe_names=disliked_recipe_names or None  # None if empty list
             )
             logger.debug(f"[{user_id}] Stage 1: Generated {len(consideration_set)} candidates")
         except Exception as e:
@@ -192,45 +227,24 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
                 data={"recommendationGenerationStatus": "idle"}
             )
             return False
-        
-        # Step 2: Filter out previously seen recipes
-        try:
-            feedback_entries = await db.trainingrecord.find_many(where={'userId': user_id})
-            seen_recipe_ids = {f.recommendationId for f in feedback_entries}
-            final_consideration_set = [
-                recipe for recipe in consideration_set 
-                if str(recipe.get('recipeId')) not in seen_recipe_ids
-            ]
-            logger.debug(
-                f"[{user_id}] Filtered: {len(consideration_set)} → "
-                f"{len(final_consideration_set)} unseen recipes"
-            )
-            
-            if not final_consideration_set:
-                logger.warning(f"[{user_id}] No unseen recipes in consideration set")
-                await db.user.update(
-                    where={"id": user_id},
-                    data={"recommendationGenerationStatus": "idle"}
-                )
-                return False
-                
-        except Exception as e:
-            logger.error(f"[{user_id}] Failed to filter seen recipes: {str(e)}")
+
+        final_consideration_set = consideration_set
+        if not final_consideration_set:
+            logger.warning(f"[{user_id}] No unseen recipes in consideration set")
             await db.user.update(
                 where={"id": user_id},
                 data={"recommendationGenerationStatus": "idle"}
             )
             return False
         
-        # Step 3: Create LLM payload
+        # Step 3: Create LLM payload — trim to top LLM_CANDIDATE_SIZE (already ranked by Stage 1 score)
         llm_payload = [{
             "recipeId": rec.get("recipeId"),
             "name": rec.get("name"),
-            "description": rec.get("description"),
             "ingredients": list(rec.get("ingredients", [])),
-            "diets": list(rec.get("diets", [])),
+            "tags": list(rec.get("tags", [])),
             "healthScore": rec.get("healthScore")
-        } for rec in final_consideration_set]
+        } for rec in final_consideration_set[:LLM_CANDIDATE_SIZE]]
         
         # Step 4: Build AIUserProfile for Stage 2
         # PHASE 4: Handle null feedback summary for LLM
@@ -299,7 +313,7 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
                 enriched_rec = {
                     "recipeId": recipe_id,
                     "name": rec.get("name", full_recipe_data.get("name")),
-                    "personalisedReason": rec.get("personalisedReason", "Recommended for you"),
+                    "personalisedReason": rec.get("explanation") or rec.get("personalisedReason") or "Recommended for you",
                     "imageUrl": full_recipe_data.get("imageUrl"),
                     "healthScore": full_recipe_data.get("healthScore", 6),
                     "ingredients": full_recipe_data.get("ingredients", []),
@@ -356,8 +370,8 @@ async def generate_and_save_recommendations(user_id: str) -> bool:
         recommendations_json = json.dumps(enriched_recommendations)
         
         # --- PHASE A STEP 2: Track cycle progress ---
-        # Calculate new totals for cycle tracking
-        num_recommendations_generated = len(recommendations)
+        # Use enriched_recommendations count (what was actually saved), capped at 5 to prevent drift
+        num_recommendations_generated = min(len(enriched_recommendations), 5)
         new_total = user.totalRecommendationsGenerated + num_recommendations_generated
         new_cycle_number = new_total // 5  # 5 items per cycle
         is_experiment_complete = new_total >= 100
@@ -478,6 +492,7 @@ async def trigger_feedback_summarization(user_id: str, new_feedbacks: List[Dict[
             "likedIngredients": user.likedIngredients or [],
             "favoriteCuisines": user.favoriteCuisines or [],
             "activityLevel": user.activityLevel or "moderately active",
+            "dietaryProfile": user.dietaryProfile or {},  # Provides health conditions for context
         }
         
         # PHASE 4: Prepare previous summary if exists (handle null gracefully)
