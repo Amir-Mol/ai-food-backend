@@ -49,10 +49,12 @@ model User {
   totalRecommendationsGenerated Int        @default(0)  // Total recommendations across all cycles (increment by 5 per cycle)
   currentCycleNumber             Int        @default(0)  // Current cycle number (0-20)
   isExperimentComplete           Boolean    @default(false)  // Set to true when totalRecommendationsGenerated >= 100
+  surveyComplete                 Boolean    @default(false)  // Set to true when post-study survey is submitted
 
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   feedback            Feedback[]
+  surveyResponse      SurveyResponse?
 }
 
 model Feedback {
@@ -90,5 +92,16 @@ model TrainingRecord {
   healthinessScore    Int?
   tastinessScore      Int?
   intentToTryScore    Int?
+  timeSpentSeconds    Int?      // How long user stayed on the detail screen before submitting
+  didOpenRecipeUrl    Boolean?  // Whether user tapped the recipe link before submitting
   createdAt           DateTime  @default(now())
+}
+
+model SurveyResponse {
+  id              String   @id @default(uuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id])
+  answers         Json     // { "q1": 4, "q2": 3, ..., "q14": "text", "q15": "" }
+  timeSpentSeconds Int?    // How long user spent on the survey screen
+  submittedAt     DateTime @default(now())
 }

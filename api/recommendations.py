@@ -52,6 +52,8 @@ class FeedbackCreate(BaseModel):
     healthinessScore: int = Field(..., ge=1, le=5)
     tastinessScore: int = Field(..., ge=1, le=5)
     intentToTryScore: int = Field(..., ge=1, le=5)
+    timeSpentSeconds: Optional[int] = None   # Seconds user spent on detail screen
+    didOpenRecipeUrl: Optional[bool] = None  # Whether user tapped the recipe link
 
 @router.get("/")
 async def get_recommendations(
@@ -228,6 +230,8 @@ async def submit_feedback(
                 "healthinessScore": feedback.healthinessScore,
                 "tastinessScore": feedback.tastinessScore,
                 "intentToTryScore": feedback.intentToTryScore,
+                "timeSpentSeconds": feedback.timeSpentSeconds,
+                "didOpenRecipeUrl": feedback.didOpenRecipeUrl,
             },
         )
         logger.debug(f"[{user_id}] Training record {training_record.id} updated with feedback")
@@ -382,6 +386,8 @@ async def submit_feedback(
         # isFifthFeedback: boolean flag so frontend can detect when to auto-trigger
         response["feedbackCount"] = feedbacks_count
         response["isFifthFeedback"] = is_fifth_feedback
+        # Let frontend know experiment is fully complete (100th feedback)
+        response["isExperimentComplete"] = updated_user.isExperimentComplete if updated_user else False
         
         if is_fifth_feedback:
             logger.info(f"[{user_id}] ✅ 5th feedback reached - frontend should auto-trigger")
@@ -394,5 +400,6 @@ async def submit_feedback(
             "status": "success",
             "message": "Feedback received successfully.",
             "feedbackCount": feedbacks_count,
-            "isFifthFeedback": is_fifth_feedback
+            "isFifthFeedback": is_fifth_feedback,
+            "isExperimentComplete": False
         }

@@ -6,7 +6,7 @@ load_dotenv()
 
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from api import auth, profile, recommendations, history, ai, admin, status
+from api import auth, profile, recommendations, history, ai, admin, status, survey
 from database import db # Import the shared db instance
 from api import recipes
 
@@ -41,3 +41,4 @@ app.include_router(ai.router, prefix="/api")
 app.include_router(recipes.router, prefix="/api")
 app.include_router(status.router, prefix="/api")
 app.include_router(admin.router, prefix="/api")
+app.include_router(survey.router, prefix="/api")
