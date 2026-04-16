@@ -12,6 +12,7 @@ from typing import Annotated, Optional
 
 from api.auth import get_current_active_user
 from prisma.models import User
+from database import db
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,25 @@ async def get_recommendation_status(current_user: Annotated[User, Depends(get_cu
     """
     user_id = current_user.id
     status = current_user.recommendationGenerationStatus or "idle"
+
+    # Guard against inconsistent state: status="ready" but no recommendations were saved.
+    # This can happen with old DB records from before the recommendations JSON field existed,
+    # or if a previous generation run crashed after setting status but before writing recommendations.
+    if status == "ready" and not current_user.recommendations:
+        logger.warning(
+            f"[{user_id}] Inconsistent state: status='ready' but recommendations is empty. Resetting to 'idle'."
+        )
+        try:
+            await db.user.update(
+                where={"id": user_id},
+                data={
+                    "recommendationGenerationStatus": "idle",
+                    "recommendationsReadyAt": None,
+                }
+            )
+        except Exception as e:
+            logger.error(f"[{user_id}] Failed to reset inconsistent status: {str(e)}")
+        status = "idle"
     
     # Calculate waitingMinutes if user is rate-limited
     waiting_minutes = None
