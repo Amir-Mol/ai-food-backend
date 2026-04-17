@@ -11,7 +11,7 @@ CONSIDERATION_SET_SIZE = 100
 LLM_CANDIDATE_SIZE = 20  # Top N from Stage 1 sent to the LLM (Stage 2)
 
 # --- Rate Limiting Settings ---
-RATE_LIMIT_MINUTES = 2  # Testing value; set to 60 for production (1 hour)
+RATE_LIMIT_MINUTES = 720  # Testing value; set to 60 for production (1 hour)
 
 # --- File Paths ---
 RAW_RECIPE_FILE = RAW_DATA_DIR / "Recipe_fooddotcom.xlsx"
